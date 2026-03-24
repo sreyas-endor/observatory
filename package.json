@@ -1,0 +1,8 @@
+{
+  "name": "observatory",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "~/.bun/bin/bun run server/index.ts",
+    "start": "~/.bun/bin/bun run server/index.ts"
+  }
+}

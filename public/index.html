@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Observatory — AI Agent Room</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: #1a1a2e;
+      overflow: hidden;
+      font-family: 'Courier New', Courier, monospace;
+    }
+
+    body { display: flex; flex-direction: row; }
+
+    #game-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      height: 100%;
+      min-width: 0;
+    }
+
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    #status-bar {
+      position: fixed;
+      bottom: 8px; right: 12px;
+      font-size: 11px; color: #555;
+      letter-spacing: 0.05em;
+      z-index: 10;
+    }
+    #status-bar .dot {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #e74c3c;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    #status-bar .dot.connected { background: #2ecc71; }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────── */
+    #sidebar {
+      /* placeholder in flow so flex layout reserves 44px for canvas calc */
+      width: 44px;
+      flex-shrink: 0;
+    }
+
+    /* Thin always-visible strip — fixed so it's always on top */
+    #sidebar-strip {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 44px;
+      height: 100%;
+      background: #ddd8c4;
+      border-left: 2px solid #93a1a1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 14px 0;
+      gap: 10px;
+      z-index: 20;
+    }
+
+    /* Expandable panel — slides in from the right, to the left of the strip */
+    #sidebar-panel {
+      position: fixed;
+      top: 0;
+      right: 44px;
+      width: 290px;
+      height: 100%;
+      background: #fdf6e3;
+      border-left: 1px solid #cdc9b0;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.22s ease;
+      overflow: hidden;
+      z-index: 19;
+    }
+    #sidebar-panel.open { transform: translateX(0); }
+
+    #strip-toggle {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #586e75;
+      border: none;
+      border-radius: 6px;
+      color: #fdf6e3;
+      font-size: 20px;
+      width: 34px;
+      height: 34px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      padding: 0;
+      font-weight: bold;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+    #strip-toggle:hover { background: #002b36; }
+
+    #strip-dots {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+
+    /* Session dot in the strip */
+    .s-dot {
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 2px solid transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-family: monospace;
+      color: #fff;
+      transition: border-color 0.15s, transform 0.1s;
+      flex-shrink: 0;
+    }
+    .s-dot:hover  { border-color: rgba(0,0,0,0.2); transform: scale(1.1); }
+    .s-dot.active { border-color: rgba(0,0,0,0.35); }
+    .s-dot canvas {
+      display: block;
+      border-radius: 3px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    .s-dot.st-thinking { background: #5566cc; }
+    .s-dot.st-reading  { background: #4477cc; }
+    .s-dot.st-editing  { background: #cc7733; }
+    .s-dot.st-running  { background: #339966; }
+    .s-dot.st-waiting  { background: #778899; }
+    .s-dot.st-input    { background: #bb9922; }
+    .s-dot.st-error    { background: #cc4444; }
+    .s-dot.st-mcp      { background: #7744bb; }
+    .s-dot.st-idle     { background: #aaaabc; }
+
+    /* Panel header */
+    #panel-header {
+      padding: 12px 14px 6px;
+      border-bottom: 1px solid #cdc9b0;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    #panel-title {
+      font-size: 11px;
+      font-weight: bold;
+      color: #586e75;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #panel-close {
+      background: none;
+      border: none;
+      color: #93a1a1;
+      cursor: pointer;
+      font-size: 15px;
+      padding: 0 2px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    #panel-close:hover { color: #586e75; }
+
+    #panel-cwd {
+      font-size: 10px;
+      color: #93a1a1;
+      padding: 4px 14px 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border-bottom: 1px solid #cdc9b0;
+      flex-shrink: 0;
+    }
+
+    /* Log list */
+    #panel-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0 12px;
+    }
+    #panel-log::-webkit-scrollbar { width: 3px; }
+    #panel-log::-webkit-scrollbar-track { background: transparent; }
+    #panel-log::-webkit-scrollbar-thumb { background: #cdc9b0; border-radius: 2px; }
+
+    .log-sep {
+      margin: 8px 14px 4px;
+      border: none;
+      border-top: 1px solid #cdc9b0;
+    }
+
+    /* Tile-style log entries */
+    .log-row {
+      margin: 4px 10px;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border-left: 3px solid transparent;
+      background: #eee8d5;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .log-row:hover { filter: brightness(0.96); }
+
+    .log-ts {
+      font-size: 10px;
+      color: #657b83;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .log-icon {
+      flex-shrink: 0;
+      font-size: 13px;
+      width: 14px;
+      text-align: center;
+    }
+    .log-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      font-weight: 500;
+    }
+
+    /* Per-kind: colored left border + tinted bg + text colour */
+    .lk-prompt  { border-color: #6c71c4; background: #ece9f5; }
+    .lk-prompt  .log-icon,
+    .lk-prompt  .log-text  { color: #6c71c4; }
+    .lk-thinking { border-color: #93a1a1; }
+    .lk-thinking .log-icon,
+    .lk-thinking .log-text { color: #93a1a1; }
+    .lk-read    { border-color: #268bd2; background: #e4f0fa; }
+    .lk-read    .log-icon,
+    .lk-read    .log-text  { color: #268bd2; }
+    .lk-edit    { border-color: #cb4b16; background: #faeee8; }
+    .lk-edit    .log-icon,
+    .lk-edit    .log-text  { color: #cb4b16; }
+    .lk-bash    { border-color: #2aa198; background: #e4f5f4; }
+    .lk-bash    .log-icon,
+    .lk-bash    .log-text  { color: #2aa198; }
+    .lk-input   { border-color: #b58900; background: #faf3e0; }
+    .lk-input   .log-icon,
+    .lk-input   .log-text  { color: #b58900; }
+    .lk-done    { border-color: #859900; background: #edf2e0; }
+    .lk-done    .log-icon,
+    .lk-done    .log-text  { color: #859900; }
+    .lk-error   { border-color: #dc322f; background: #fae8e8; }
+    .lk-error   .log-icon,
+    .lk-error   .log-text  { color: #dc322f; }
+    .lk-mcp     { border-color: #d33682; background: #fae8f2; }
+    .lk-mcp     .log-icon,
+    .lk-mcp     .log-text  { color: #d33682; }
+
+    #panel-empty {
+      padding: 32px 16px;
+      font-size: 13px;
+      color: #93a1a1;
+      text-align: center;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container"></div>
+
+  <div id="status-bar">
+    <span class="dot" id="ws-dot"></span>
+    <span id="ws-label">connecting…</span>
+  </div>
+
+  <!-- Sidebar: collapsed strip + expandable panel -->
+  <div id="sidebar">
+    <div id="sidebar-strip">
+      <div id="strip-dots"></div>
+      <button id="strip-toggle" title="open panel">←</button>
+    </div>
+    <div id="sidebar-panel">
+      <div id="panel-header">
+        <span id="panel-title">—</span>
+        <button id="panel-close">✕</button>
+      </div>
+      <div id="panel-cwd"></div>
+      <div id="panel-log"></div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
