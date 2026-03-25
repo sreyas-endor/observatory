@@ -21,6 +21,7 @@ interface Session {
   state: SessionState;
   lastSeen: number;
   startedAt: number;
+  stateChangedAt: number;
 }
 
 // ── Types (log) ────────────────────────────────────────────────────────────
@@ -90,13 +91,16 @@ function upsertSession(
   state: SessionState
 ) {
   const existing = sessions.get(id);
+  const now = Date.now();
+  const stateChanged = existing?.state !== state;
   sessions.set(id, {
     id,
     type,
     cwd,
     state,
-    lastSeen: Date.now(),
-    startedAt: existing?.startedAt ?? Date.now(),
+    lastSeen: now,
+    startedAt: existing?.startedAt ?? now,
+    stateChangedAt: stateChanged ? now : (existing?.stateChangedAt ?? now),
   });
   broadcastSessions();
 }
@@ -179,8 +183,9 @@ function handleClaudeHook(body: Record<string, unknown>) {
   }
 
   // After upserting, if this was a PreToolUse for a blocking tool (not AskUserQuestion
-  // which is already "input"), start a permission-wait timer.
-  if (hookEvent === "PreToolUse" && state !== "input") {
+  // which is already "input", and not read-type tools which take long and don't need approval),
+  // start a permission-wait timer.
+  if (hookEvent === "PreToolUse" && state !== "input" && state !== "reading") {
     // Cancel any previous timer for this session
     const existing = permissionTimers.get(sessionId);
     if (existing !== undefined) clearTimeout(existing);
@@ -200,10 +205,9 @@ function handleClaudeHook(body: Record<string, unknown>) {
 // ── Cursor hook handler ────────────────────────────────────────────────────
 
 function handleCursorHook(body: Record<string, unknown>) {
-  console.log("[cursor hook]", JSON.stringify(body));
   const event = (body.hook_event_name ?? body.event ?? body.type ?? body.hook ?? "") as string;
   const sessionId = (body.conversation_id ?? body.session_id ?? body.id ?? "") as string;
-  if (!sessionId) { console.log("[cursor hook] dropped — no sessionId, keys:", Object.keys(body)); return; }
+  if (!sessionId) return;
 
   const workspaceRoots = body.workspace_roots as string[] | undefined;
   const cwd = (workspaceRoots?.[0] ?? body.cwd ?? body.workspaceRoot ?? body.workspace ?? "") as string;
