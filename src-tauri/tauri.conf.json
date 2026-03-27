@@ -1,0 +1,40 @@
+{
+  "productName": "Observatory",
+  "version": "0.1.0",
+  "identifier": "com.observatory.app",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": "http://localhost:7337",
+    "frontendDist": "../public"
+  },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../server/**/*",
+      "../public/**/*",
+      "../node_modules/**/*",
+      "../package.json"
+    ]
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

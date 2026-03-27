@@ -4,5 +4,8 @@
   "scripts": {
     "dev": "~/.bun/bin/bun run server/index.ts",
     "start": "~/.bun/bin/bun run server/index.ts"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
   }
 }

@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Observatory — AI Agent Room</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -14,7 +17,7 @@
       font-family: 'Courier New', Courier, monospace;
     }
 
-    body { display: flex; flex-direction: row; }
+    body { display: flex; }
 
     #game-container {
       display: flex;
@@ -23,6 +26,7 @@
       flex: 1;
       height: 100%;
       min-width: 0;
+      transition: transform 1s cubic-bezier(0.25, 0.1, 0.25, 1);
     }
 
     canvas {
@@ -48,241 +52,229 @@
     }
     #status-bar .dot.connected { background: #2ecc71; }
 
-    /* ── Sidebar ─────────────────────────────────────────────────────── */
-    #sidebar {
-      /* placeholder in flow so flex layout reserves 44px for canvas calc */
-      width: 44px;
-      flex-shrink: 0;
-    }
-
-    /* Thin always-visible strip — fixed so it's always on top */
-    #sidebar-strip {
+    /* ── FAB (Floating Action Button) ─────────────────────────────── */
+    #fab {
       position: fixed;
-      top: 0;
-      right: 0;
-      width: 44px;
-      height: 100%;
-      background: #ddd8c4;
-      border-left: 2px solid #93a1a1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 14px 0;
-      gap: 10px;
-      z-index: 20;
+      bottom: 28px;
+      right: 28px;
+      z-index: 30;
     }
 
-    /* Expandable panel — slides in from the right, to the left of the strip */
-    #sidebar-panel {
-      position: fixed;
-      top: 0;
-      right: 44px;
-      width: 290px;
-      height: 100%;
-      background: #fdf6e3;
-      border-left: 1px solid #cdc9b0;
-      display: flex;
-      flex-direction: column;
-      transform: translateX(100%);
-      transition: transform 0.22s ease;
-      overflow: hidden;
-      z-index: 19;
-    }
-    #sidebar-panel.open { transform: translateX(0); }
-
-    #strip-toggle {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: #586e75;
-      border: none;
-      border-radius: 6px;
-      color: #fdf6e3;
-      font-size: 20px;
-      width: 34px;
-      height: 34px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      line-height: 1;
-      padding: 0;
-      font-weight: bold;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
-    }
-    #strip-toggle:hover { background: #002b36; }
-
-    #strip-dots {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-    }
-
-    /* Session dot in the strip */
-    .s-dot {
-      width: 30px; height: 30px;
+    #fab-btn {
+      width: 48px; height: 48px;
       border-radius: 50%;
+      background: #1a1a2e;
+      border: 2px solid #3e4451;
+      color: #e5e5e5;
+      font-size: 22px;
       cursor: pointer;
-      border: 2px solid transparent;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 10px;
-      font-family: monospace;
-      color: #fff;
-      transition: border-color 0.15s, transform 0.1s;
-      flex-shrink: 0;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      transition: transform 0.18s ease, background 0.15s;
     }
-    .s-dot:hover  { border-color: rgba(0,0,0,0.2); transform: scale(1.1); }
-    .s-dot.active { border-color: rgba(0,0,0,0.35); }
-    .s-dot canvas {
+    #fab-btn:hover { background: #282c34; transform: scale(1.08); }
+    #fab-btn.open { transform: rotate(45deg); }
+
+    #fab-menu {
+      position: absolute;
+      bottom: 60px;
+      right: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(10px);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+    #fab-menu.open {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+
+    .fab-agent {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 18px 10px 10px;
+      background: #111118;
+      border: 2px solid #2a2d3a;
+      border-radius: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      min-width: 200px;
+      transition: background 0.12s, border-color 0.12s;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .fab-agent:hover { background: #2a2d3a; border-color: #5566cc; }
+
+    .fab-agent-face {
+      width: 36px; height: 36px;
+      border-radius: 6px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      background: #282c34;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .fab-agent-face canvas {
       display: block;
-      border-radius: 3px;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
     }
 
-    .s-dot.st-thinking { background: #5566cc; }
-    .s-dot.st-reading  { background: #4477cc; }
-    .s-dot.st-editing  { background: #cc7733; }
-    .s-dot.st-running  { background: #339966; }
-    .s-dot.st-waiting  { background: #778899; }
-    .s-dot.st-input    { background: #bb9922; }
-    .s-dot.st-error    { background: #cc4444; }
-    .s-dot.st-mcp      { background: #7744bb; }
-    .s-dot.st-idle     { background: #aaaabc; }
+    .fab-agent-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .fab-agent-name {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 700;
+      color: #e5e5e5;
+    }
+    .fab-agent-status {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+    .fab-agent-status.running { color: #2ecc71; }
+    .fab-agent-status.inactive { color: #cc4444; }
 
-    /* Panel header */
-    #panel-header {
-      padding: 12px 14px 6px;
-      border-bottom: 1px solid #cdc9b0;
-      flex-shrink: 0;
+    /* ── Terminal panel — left-docked side panel ────────────────────── */
+    #terminal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      z-index: 24;
+      pointer-events: none;
+    }
+    #terminal-backdrop.open { display: block; }
+
+    #terminal-panel {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 50vw;
+      height: 100vh;
+      background: #282c34;
+      border-right: 2px solid #3e4451;
+      display: flex;
+      flex-direction: column;
+      z-index: 25;
+      box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+      transform: translateX(-100%);
+      transition: transform 1s cubic-bezier(0.25, 0.1, 0.25, 1);
+      overflow: visible;
+      min-width: 300px;
+    }
+    #terminal-panel.open {
+      transform: translateX(0);
+    }
+
+    /* ── Right-edge resize handle ── */
+    #terminal-panel .resize-handle {
+      position: absolute;
+      z-index: 30;
+    }
+    #terminal-panel .rh-e {
+      right: -4px;
+      top: 0;
+      bottom: 0;
+      width: 8px;
+      cursor: ew-resize;
+    }
+
+    #terminal-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
-    }
-    #panel-title {
-      font-size: 11px;
-      font-weight: bold;
-      color: #586e75;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    #panel-close {
-      background: none;
-      border: none;
-      color: #93a1a1;
-      cursor: pointer;
-      font-size: 15px;
-      padding: 0 2px;
-      line-height: 1;
+      background: #21252b;
+      padding: 0 8px;
+      height: 34px;
       flex-shrink: 0;
-    }
-    #panel-close:hover { color: #586e75; }
-
-    #panel-cwd {
-      font-size: 10px;
-      color: #93a1a1;
-      padding: 4px 14px 8px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      border-bottom: 1px solid #cdc9b0;
-      flex-shrink: 0;
+      border-bottom: 1px solid #3e4451;
     }
 
-    /* Log list */
-    #panel-log {
+    #terminal-tabs {
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
       flex: 1;
-      overflow-y: auto;
-      padding: 6px 0 12px;
     }
-    #panel-log::-webkit-scrollbar { width: 3px; }
-    #panel-log::-webkit-scrollbar-track { background: transparent; }
-    #panel-log::-webkit-scrollbar-thumb { background: #cdc9b0; border-radius: 2px; }
 
-    .log-sep {
-      margin: 8px 14px 4px;
+    .terminal-tab {
+      padding: 4px 14px;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', 'Menlo', monospace;
+      color: #636d83;
+      background: transparent;
       border: none;
-      border-top: 1px solid #cdc9b0;
-    }
-
-    /* Tile-style log entries */
-    .log-row {
-      margin: 4px 10px;
-      padding: 7px 10px;
-      border-radius: 6px;
-      border-left: 3px solid transparent;
-      background: #eee8d5;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
       display: flex;
       align-items: center;
-      gap: 9px;
-      font-size: 13px;
-      line-height: 1.4;
+      gap: 8px;
+      transition: color 0.15s;
     }
-    .log-row:hover { filter: brightness(0.96); }
+    .terminal-tab:hover { color: #abb2bf; }
+    .terminal-tab.active {
+      color: #e5e5e5;
+      border-bottom-color: #61afef;
+      background: rgba(255,255,255,0.03);
+    }
+    .terminal-tab .tab-close {
+      font-size: 9px;
+      color: #636d83;
+      cursor: pointer;
+      padding: 2px 3px;
+      border-radius: 3px;
+    }
+    .terminal-tab .tab-close:hover { color: #e06c75; background: rgba(224,108,117,0.12); }
 
-    .log-ts {
-      font-size: 10px;
-      color: #657b83;
+    #terminal-actions {
+      display: flex;
+      gap: 4px;
       flex-shrink: 0;
-      white-space: nowrap;
     }
-    .log-icon {
-      flex-shrink: 0;
-      font-size: 13px;
-      width: 14px;
-      text-align: center;
+
+    #terminal-close {
+      background: none;
+      border: none;
+      color: #636d83;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 3px;
     }
-    .log-text {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    #terminal-close:hover { color: #e06c75; background: rgba(224,108,117,0.12); }
+
+    #terminal-container {
       flex: 1;
-      font-weight: 500;
+      position: relative;
+      overflow: hidden;
+      background: #282c34;
     }
 
-    /* Per-kind: colored left border + tinted bg + text colour */
-    .lk-prompt  { border-color: #6c71c4; background: #ece9f5; }
-    .lk-prompt  .log-icon,
-    .lk-prompt  .log-text  { color: #6c71c4; }
-    .lk-thinking { border-color: #93a1a1; }
-    .lk-thinking .log-icon,
-    .lk-thinking .log-text { color: #93a1a1; }
-    .lk-read    { border-color: #268bd2; background: #e4f0fa; }
-    .lk-read    .log-icon,
-    .lk-read    .log-text  { color: #268bd2; }
-    .lk-edit    { border-color: #cb4b16; background: #faeee8; }
-    .lk-edit    .log-icon,
-    .lk-edit    .log-text  { color: #cb4b16; }
-    .lk-bash    { border-color: #2aa198; background: #e4f5f4; }
-    .lk-bash    .log-icon,
-    .lk-bash    .log-text  { color: #2aa198; }
-    .lk-input   { border-color: #b58900; background: #faf3e0; }
-    .lk-input   .log-icon,
-    .lk-input   .log-text  { color: #b58900; }
-    .lk-done    { border-color: #859900; background: #edf2e0; }
-    .lk-done    .log-icon,
-    .lk-done    .log-text  { color: #859900; }
-    .lk-error   { border-color: #dc322f; background: #fae8e8; }
-    .lk-error   .log-icon,
-    .lk-error   .log-text  { color: #dc322f; }
-    .lk-mcp     { border-color: #d33682; background: #fae8f2; }
-    .lk-mcp     .log-icon,
-    .lk-mcp     .log-text  { color: #d33682; }
-
-    #panel-empty {
-      padding: 32px 16px;
-      font-size: 13px;
-      color: #93a1a1;
-      text-align: center;
-      font-family: monospace;
+    #terminal-container .xterm {
+      height: 100%;
+      padding: 2px 0 0 6px;
     }
+
+    /* Hide xterm scrollbar to match Ghostty's clean look */
+    #terminal-container .xterm-viewport::-webkit-scrollbar { width: 6px; }
+    #terminal-container .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+    #terminal-container .xterm-viewport::-webkit-scrollbar-thumb { background: #3e4451; border-radius: 3px; }
+    #terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #4b5263; }
+
   </style>
 </head>
 <body>
@@ -293,21 +285,36 @@
     <span id="ws-label">connecting…</span>
   </div>
 
-  <!-- Sidebar: collapsed strip + expandable panel -->
-  <div id="sidebar">
-    <div id="sidebar-strip">
-      <div id="strip-dots"></div>
-      <button id="strip-toggle" title="open panel">←</button>
-    </div>
-    <div id="sidebar-panel">
-      <div id="panel-header">
-        <span id="panel-title">—</span>
-        <button id="panel-close">✕</button>
+  <!-- Terminal overlay backdrop -->
+  <div id="terminal-backdrop"></div>
+
+  <!-- Terminal panel — left-docked side panel -->
+  <div id="terminal-panel">
+    <div class="resize-handle rh-e" data-dir="e"></div>
+    <div id="terminal-header">
+      <div id="terminal-tabs"></div>
+      <div id="terminal-actions">
+        <button id="terminal-close" title="close terminal">✕</button>
       </div>
-      <div id="panel-cwd"></div>
-      <div id="panel-log"></div>
     </div>
+    <div id="terminal-container"></div>
   </div>
+
+  <!-- FAB: agent launcher -->
+  <div id="fab">
+    <div id="fab-menu"></div>
+    <button id="fab-btn" title="Agents">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="12" rx="2" /><line x1="2" y1="20" x2="22" y2="20" /><circle cx="9" cy="10" r="1.5" fill="currentColor" stroke="none" /><circle cx="15" cy="10" r="1.5" fill="currentColor" stroke="none" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- xterm.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
 
   <script src="game.js"></script>
 </body>

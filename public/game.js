@@ -23,7 +23,7 @@
   // Famous dev names matched to sprite gender (char_1 and char_3 are female)
   const CHAR_NAMES = ['Linus', 'Hopper', 'Carmack', 'Lovelace', 'Karpathy', 'Knuth'];
 
-  // Activity pill colours (match sidebar Solarized theme)
+  // Activity pill colours
   const ACTIVITY_COLORS = {
     prompt:   '#6c71c4',
     thinking: '#93a1a1',
@@ -42,7 +42,7 @@
   };
 
   // ── Floor / wall colours ──────────────────────────────────────────────────
-  const TILE_COLORS = { 0: '#3e4760', 7: '#c4a882', 1: '#8098b8', 9: '#687a9a' };
+  const TILE_COLORS = { 0: '#3e4760', 5: '#c4a882', 7: '#c4a882', 1: '#8098b8', 9: '#687a9a' };
 
   // ── Furniture catalog ─────────────────────────────────────────────────────
   const FC = {
@@ -73,13 +73,14 @@
     'SMALL_TABLE_SIDE':       { file: 'assets/furniture/SMALL_TABLE/SMALL_TABLE_SIDE.png',            fw:1, fh:3, pw:16, ph:48, bgTiles:1 },
   };
 
-  // ── Seat definitions ──────────────────────────────────────────────────────
+  // ── Seat definitions — one per corner room ────────────────────────────────
   const SEAT_DEFS = [
     { seatId: 'seat-0', col: 3, row: 14, dir: DIR.UP },
     { seatId: 'seat-1', col: 7, row: 14, dir: DIR.UP },
   ];
 
-  // ── Lounge spots — one per character slot around the sofa U ──────────────
+
+  // ── Sofa lounge spots — one per character slot, spread around the sofa U ──
   const LOUNGE_TABLE_SPOTS = [
     { col: 14, row: 12, dir: DIR.DOWN  },
     { col: 15, row: 12, dir: DIR.DOWN  },
@@ -128,6 +129,32 @@
     ]
   };
 
+  // ── Terminal theme (Ghostty default palette) ─────────────────────────────
+  const TERMINAL_THEME = {
+    background: '#282c34',
+    foreground: '#ffffff',
+    cursor: '#ffffff',
+    cursorAccent: '#282c34',
+    selectionBackground: 'rgba(255, 255, 255, 0.20)',
+    selectionForeground: '#ffffff',
+    black:   '#1d2021',
+    red:     '#cc241d',
+    green:   '#98971a',
+    yellow:  '#d79921',
+    blue:    '#458588',
+    magenta: '#b16286',
+    cyan:    '#689d6a',
+    white:   '#a89984',
+    brightBlack:   '#928374',
+    brightRed:     '#fb4934',
+    brightGreen:   '#b8bb26',
+    brightYellow:  '#fabd2f',
+    brightBlue:    '#83a598',
+    brightMagenta: '#d3869b',
+    brightCyan:    '#8ec07c',
+    brightWhite:   '#ebdbb2',
+  };
+
   // ── Module state ──────────────────────────────────────────────────────────
   let canvas, ctx;
   let zoom = 3;
@@ -153,6 +180,21 @@
   // ── Sidebar state ─────────────────────────────────────────────────────────
   const sessionLogs = new Map(); // sessionId → LogEntry[]
   let activePanelId = null;
+
+  // ── Terminal state ──────────────────────────────────────────────────────
+  const openTerminals = new Map(); // terminalId → { xterm, ws, fitAddon, name, sessionId }
+  const sessionTerminals = new Map(); // sessionId → terminalId
+  let activeTerminalId = null;
+
+  function nextAvailableName() {
+    const usedNames = new Set();
+    for (const [, t] of openTerminals) usedNames.add(t.name);
+    for (const name of CHAR_NAMES) {
+      if (!usedNames.has(name)) return name;
+    }
+    // All names taken — append a number
+    return CHAR_NAMES[0] + ' ' + (openTerminals.size + 1);
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function randRange(min, max) { return min + Math.random() * (max - min); }
@@ -241,7 +283,7 @@
   }
 
   function buildFaceCanvas(img) {
-    const FACE_H = 14;
+    const FACE_H = 22; // full head + face (hair, eyes, mouth)
     const oc = document.createElement('canvas');
     oc.width = CHAR_W; oc.height = FACE_H;
     const c = oc.getContext('2d');
@@ -319,8 +361,8 @@
         loadImage(`assets/floors/floor_${i}.png`).then(img => { floorImages[i] = img; })
       )
     );
-    // Tile type 7 = left room floor (near-black/white checker) → warm tan tint
-    if (floorImages[7]) floorImages[7] = tintImage(floorImages[7], 210, 175, 130);
+    // Warm wood tint on planks
+    if (floorImages[5]) floorImages[5] = tintImage(floorImages[5], 210, 175, 130);
 
     const filesToLoad = new Set();
     for (const f of (layout?.furniture || [])) {
@@ -372,6 +414,10 @@
 
   function buildLoungeTiles() {
     return walkableTiles.filter(t => t.col >= 11 && t.col <= 18 && t.row >= 11 && t.row <= 20);
+  }
+
+  function buildLeftRoomTiles() {
+    return walkableTiles.filter(t => t.col >= 1 && t.col <= 9 && t.row >= 11 && t.row <= 20);
   }
 
   function buildFurnitureInstances(layoutData) {
@@ -486,9 +532,11 @@
         break;
     }
 
-    // Just started needing input → walk to sofa
-    if (!wasNeedsInput && ch.needsInput) {
-      walkTo(ch, loungeSpot(ch).col, loungeSpot(ch).row, loungeSpot(ch).dir);
+    // Just started needing input → get up and wander
+    if (!wasNeedsInput && ch.needsInput && ch.seatId) {
+      ch.wanderTimer = 0;
+      ch.state = STATE.IDLE;
+      ch.frame = 0; ch.frameTimer = 0;
     }
 
     // Input answered → walk back to desk
@@ -497,11 +545,12 @@
       if (seat) walkTo(ch, seat.col, seat.row, seat.dir);
     }
 
-    // Became inactive → start lounge wander phase
+    // Became inactive → start wander phase (left room if terminal open, lounge otherwise)
     if (wasActive && !ch.isActive) {
       ch.stateChangedAt = Date.now();
       ch.wanderTimer = 0;
-      const restTiles = buildLoungeTiles();
+      const termOpen = document.getElementById('terminal-panel').classList.contains('open');
+      const restTiles = termOpen ? buildLeftRoomTiles() : buildLoungeTiles();
       if (restTiles.length > 0) {
         const t = restTiles[Math.floor(Math.random() * restTiles.length)];
         walkTo(ch, t.col, t.row, ch.dir);
@@ -554,6 +603,14 @@
       applySessionState(ch, session.state);
       // Always use server's stateChangedAt — it's authoritative for timer display
       if (session.stateChangedAt) ch.stateChangedAt = session.stateChangedAt;
+      // Auto-link session to its terminal (session id = terminal id)
+      if (session.terminalId && openTerminals.has(session.terminalId)) {
+        const term = openTerminals.get(session.terminalId);
+        if (!term.sessionId) {
+          term.sessionId = session.id;
+          sessionTerminals.set(session.id, session.terminalId);
+        }
+      }
     }
   }
 
@@ -566,10 +623,6 @@
         if (ch.frameTimer >= TYPE_FRAME_DUR) {
           ch.frameTimer -= TYPE_FRAME_DUR;
           ch.frame = (ch.frame + 1) % 2;
-        }
-        if (ch.needsInput) {
-          walkTo(ch, loungeSpot(ch).col, loungeSpot(ch).row, loungeSpot(ch).dir);
-          break;
         }
         if (!ch.isActive) {
           if (ch.seatTimer > 0) { ch.seatTimer -= dt; break; }
@@ -595,15 +648,6 @@
 
       case STATE.IDLE: {
         ch.frame = 0;
-        if (ch.needsInput) {
-          if (ch.tileCol !== loungeSpot(ch).col || ch.tileRow !== loungeSpot(ch).row) {
-            walkTo(ch, loungeSpot(ch).col, loungeSpot(ch).row, loungeSpot(ch).dir);
-          } else {
-            ch.dir   = loungeSpot(ch).dir;
-            ch.state = STATE.READ; ch.frame = 0; ch.frameTimer = 0;
-          }
-          break;
-        }
         if (ch.isActive) {
           if (!ch.seatId) {
             ch.state = STATE.TYPE; ch.frame = 0; ch.frameTimer = 0;
@@ -621,13 +665,15 @@
           }
           break;
         }
-        // Inactive — phase 1: wander lounge (0–5 min), phase 2: sleep (5–15 min)
+        // Inactive — phase 1: wander (0–5 min), phase 2: sleep (5–15 min)
+        // When terminal overlay is open, confine to corner zone
         const inactiveSecs = ch.stateChangedAt ? (Date.now() - ch.stateChangedAt) / 1000 : 0;
         if (inactiveSecs < 5 * 60) {
           ch.bubbleType = null;
           ch.wanderTimer -= dt;
           if (ch.wanderTimer <= 0) {
-            const restTiles = buildLoungeTiles();
+            const termOpen = document.getElementById('terminal-panel').classList.contains('open');
+            const restTiles = termOpen ? buildLeftRoomTiles() : buildLoungeTiles();
             if (restTiles.length > 0) {
               const t = restTiles[Math.floor(Math.random() * restTiles.length)];
               walkTo(ch, t.col, t.row, ch.dir);
@@ -635,12 +681,27 @@
             ch.wanderTimer = randRange(3, 7);
           }
         } else {
-          const spot = loungeSpot(ch);
-          if (ch.tileCol !== spot.col || ch.tileRow !== spot.row) {
-            walkTo(ch, spot.col, spot.row, spot.dir);
+          const termOpen = document.getElementById('terminal-panel').classList.contains('open');
+          if (termOpen) {
+            // Sleep in the left room when terminal is open
+            const leftTiles = buildLeftRoomTiles();
+            if (leftTiles.length > 0) {
+              const inLeft = ch.tileCol >= 1 && ch.tileCol <= 9;
+              if (!inLeft) {
+                const t = leftTiles[Math.floor(Math.random() * leftTiles.length)];
+                walkTo(ch, t.col, t.row, ch.dir);
+              } else {
+                if (ch.bubbleType !== 'sleeping') ch.bubbleType = 'sleeping';
+              }
+            }
           } else {
-            ch.dir = spot.dir;
-            if (ch.bubbleType !== 'sleeping') ch.bubbleType = 'sleeping';
+            const spot = loungeSpot(ch);
+            if (ch.tileCol !== spot.col || ch.tileRow !== spot.row) {
+              walkTo(ch, spot.col, spot.row, spot.dir);
+            } else {
+              ch.dir = spot.dir;
+              if (ch.bubbleType !== 'sleeping') ch.bubbleType = 'sleeping';
+            }
           }
         }
         break;
@@ -781,19 +842,27 @@
       : drawY;
     let curY = bubbleTop - gap;
 
-    // Activity pill — only when actively coding
-    const entries = sessionLogs.get(ch.sessionId) || [];
-    const latest  = (ch.isActive && ch.state === STATE.TYPE && entries.length)
-                    ? entries[entries.length - 1] : null;
-    if (latest && latest.kind !== 'done') {
-      const icon   = LOG_ICONS[latest.kind] ?? '.';
-      const detail = latest.detail ? latest.detail.slice(0, 20) : latest.kind;
-      const label  = latest.kind === 'thinking' ? '...' : icon + ': ' + detail;
+    // Activity pill — when actively coding or awaiting input
+    if (ch.needsInput) {
       curY -= (fs + py * 2);
       ctx.globalAlpha = 0.9;
-      pill(cx, curY, label, ACTIVITY_COLORS[latest.kind] ?? '#6c71c4', '#ffffff', fs, px, py);
+      pill(cx, curY, '...', ACTIVITY_COLORS.input, '#ffffff', fs, px, py);
       ctx.globalAlpha = 1;
       curY -= gap;
+    } else {
+      const entries = sessionLogs.get(ch.sessionId) || [];
+      const latest  = (ch.isActive && ch.state === STATE.TYPE && entries.length)
+                      ? entries[entries.length - 1] : null;
+      if (latest && latest.kind !== 'done') {
+        const icon   = LOG_ICONS[latest.kind] ?? '.';
+        const detail = latest.detail ? latest.detail.slice(0, 20) : latest.kind;
+        const label  = latest.kind === 'thinking' ? '...' : icon + ': ' + detail;
+        curY -= (fs + py * 2);
+        ctx.globalAlpha = 0.9;
+        pill(cx, curY, label, ACTIVITY_COLORS[latest.kind] ?? '#6c71c4', '#ffffff', fs, px, py);
+        ctx.globalAlpha = 1;
+        curY -= gap;
+      }
     }
 
     // Timer pill
@@ -921,7 +990,8 @@
 
     for (const ch of characters.values()) updateCharacter(ch, dt);
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#3e4760';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.imageSmoothingEnabled = false;
     const { offsetX, offsetY } = computeOffset();
     renderTiles(offsetX, offsetY);
@@ -978,42 +1048,10 @@
 
   function openPanel(sessionId) {
     activePanelId = sessionId;
-    const panel = document.getElementById('sidebar-panel');
-    const logEl = document.getElementById('panel-log');
-
-    const ch = characters.get(sessionId);
-    const s  = allSessions.find(s => s.id === sessionId);
-    document.getElementById('panel-title').textContent =
-      (ch ? ch.name : sessionId.slice(0, 8)) + (s ? ' · ' + (s.type === 'claude' ? 'Claude' : 'Cursor') : '');
-    document.getElementById('panel-cwd').textContent = s?.cwd || '';
-
-    logEl.innerHTML = '';
-    const entries = sessionLogs.get(sessionId) || [];
-    if (entries.length === 0) {
-      const empty = document.createElement('div');
-      empty.id = 'panel-empty';
-      empty.textContent = 'no activity yet';
-      logEl.appendChild(empty);
-    } else {
-      for (const entry of entries) {
-        if (entry.kind === 'prompt' && logEl.children.length > 0) {
-          const sep = document.createElement('hr');
-          sep.className = 'log-sep';
-          logEl.appendChild(sep);
-        }
-        logEl.appendChild(buildLogRow(entry));
-      }
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-
-    panel.classList.add('open');
-    updateStrip();
   }
 
   function closePanel() {
     activePanelId = null;
-    document.getElementById('sidebar-panel').classList.remove('open');
-    updateStrip();
   }
 
   function appendToPanel(sessionId, entry) {
@@ -1034,39 +1072,97 @@
     if (atBottom) logEl.scrollTop = logEl.scrollHeight;
   }
 
-  function updateStrip() {
-    const dots = document.getElementById('strip-dots');
-    if (!dots) return;
-    dots.innerHTML = '';
+  // ── FAB menu ──────────────────────────────────────────────────────────────
+  const FAB_SLOTS = 4; // max agents shown in FAB
 
-    for (const s of allSessions) {
-      const dot = document.createElement('div');
-      dot.className = `s-dot st-${s.state}${s.id === activePanelId ? ' active' : ''}`;
-      const ch = characters.get(s.id);
-      dot.title = (ch ? ch.name : s.id.slice(0, 8)) + ' · ' + s.id.slice(0, 8);
+  function updateFabMenu() {
+    const menu = document.getElementById('fab-menu');
+    if (!menu) return;
+    menu.innerHTML = '';
 
-      const faceCanvas = ch ? charFaceCanvases[ch.palette] : null;
-      if (faceCanvas) {
-        const dc  = document.createElement('canvas');
-        dc.width  = 22; dc.height = 22;
-        dc.style.imageRendering = 'pixelated';
-        const dctx = dc.getContext('2d');
-        dctx.imageSmoothingEnabled = false;
-        const dstH = Math.round(14 * (22 / 16));
-        dctx.drawImage(faceCanvas, 0, 0, 16, 14, 0, Math.round((22 - dstH) / 2), 22, dstH);
-        dot.appendChild(dc);
-      } else {
-        dot.textContent = s.type === 'claude' ? 'C' : 'V';
+    for (let i = 0; i < FAB_SLOTS; i++) {
+      const name = CHAR_NAMES[i] || `Agent ${i + 1}`;
+
+      // Find if this agent slot has a running terminal
+      let termEntry = null;
+      let sessionEntry = null;
+      for (const [tid, t] of openTerminals) {
+        if (t.name === name) { termEntry = { terminalId: tid, ...t }; break; }
+      }
+      if (termEntry && termEntry.sessionId) {
+        sessionEntry = allSessions.find(s => s.id === termEntry.sessionId);
       }
 
-      dot.addEventListener('click', () => {
-        if (activePanelId === s.id) closePanel(); else openPanel(s.id);
-      });
-      dots.appendChild(dot);
-    }
+      const isActive = !!(sessionEntry);
+      const hasTerminal = !!(termEntry);
 
-    const toggle = document.getElementById('strip-toggle');
-    if (toggle) toggle.textContent = activePanelId ? '→' : '←';
+      const card = document.createElement('div');
+      card.className = `fab-agent${isActive ? ' active' : ''}${!hasTerminal ? ' inactive' : ''}`;
+
+      // Face sprite
+      const faceWrap = document.createElement('div');
+      faceWrap.className = 'fab-agent-face';
+      const faceCanvas = charFaceCanvases[i];
+      if (faceCanvas) {
+        const dc = document.createElement('canvas');
+        dc.width = 36; dc.height = 36;
+        const dctx = dc.getContext('2d');
+        dctx.imageSmoothingEnabled = false;
+        // Draw full face sprite centered, preserving aspect ratio
+        const srcW = faceCanvas.width, srcH = faceCanvas.height;
+        const scale = Math.min(36 / srcW, 36 / srcH);
+        const dstW = Math.round(srcW * scale);
+        const dstH = Math.round(srcH * scale);
+        dctx.drawImage(faceCanvas, 0, 0, srcW, srcH,
+          Math.round((36 - dstW) / 2), Math.round((36 - dstH) / 2), dstW, dstH);
+        faceWrap.appendChild(dc);
+      }
+      card.appendChild(faceWrap);
+
+      // Name + status
+      const info = document.createElement('div');
+      info.className = 'fab-agent-info';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'fab-agent-name';
+      nameEl.textContent = name;
+      info.appendChild(nameEl);
+      const statusEl = document.createElement('div');
+      const isRunning = isActive || hasTerminal;
+      statusEl.className = 'fab-agent-status ' + (isRunning ? 'running' : 'inactive');
+      statusEl.textContent = isRunning ? 'running' : 'inactive';
+      info.appendChild(statusEl);
+      card.appendChild(info);
+
+      // Click handler
+      card.addEventListener('click', () => {
+        closeFabMenu();
+        if (hasTerminal) {
+          showTerminalPanel(termEntry.terminalId);
+        } else {
+          launchTerminal(undefined, undefined, name);
+        }
+      });
+
+      menu.appendChild(card);
+    }
+  }
+
+  function toggleFabMenu() {
+    const btn = document.getElementById('fab-btn');
+    const menu = document.getElementById('fab-menu');
+    const isOpen = menu.classList.contains('open');
+    if (isOpen) {
+      closeFabMenu();
+    } else {
+      updateFabMenu();
+      menu.classList.add('open');
+      btn.classList.add('open');
+    }
+  }
+
+  function closeFabMenu() {
+    document.getElementById('fab-menu').classList.remove('open');
+    document.getElementById('fab-btn').classList.remove('open');
   }
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
@@ -1079,7 +1175,6 @@
         if (msg.type === 'sessions') {
           allSessions = msg.data || [];
           syncSessions(allSessions);
-          updateStrip();
         } else if (msg.type === 'logs') {
           for (const [id, entries] of Object.entries(msg.data || {})) {
             sessionLogs.set(id, entries);
@@ -1092,12 +1187,6 @@
     };
     ws.onclose = () => { setStatus(false); setTimeout(connectWS, 3000); };
     ws.onerror = () => ws.close();
-  }
-
-  function sendFocus(sessionId) {
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'focus', sessionId }));
-    }
   }
 
   // ── Status bar ────────────────────────────────────────────────────────────
@@ -1124,7 +1213,7 @@
       const py = (e.clientY - rect.top)  * (canvas.height / rect.height);
       const hit = getCharacterAt(px, py);
       if (hit) {
-        if (activePanelId === hit.id) closePanel(); else openPanel(hit.id);
+        openOrSwitchTerminal(hit.id);
       }
     });
 
@@ -1135,15 +1224,15 @@
       canvas.style.cursor = getCharacterAt(px, py) ? 'pointer' : 'default';
     });
 
-    document.getElementById('panel-close').addEventListener('click', closePanel);
-    document.getElementById('strip-toggle').addEventListener('click', () => {
-      if (activePanelId) {
-        closePanel();
-      } else if (allSessions.length > 0) {
-        openPanel(allSessions[0].id);
-      }
+    // FAB controls
+    document.getElementById('fab-btn').addEventListener('click', toggleFabMenu);
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#fab')) closeFabMenu();
     });
-    updateStrip();
+
+    // Terminal controls
+    document.getElementById('terminal-close').addEventListener('click', closeTerminalPanel);
+    // Backdrop is non-interactive — terminal closes only via close button
   }
 
   function resizeCanvas() {
@@ -1157,7 +1246,451 @@
     ctx.imageSmoothingEnabled = false;
     computeZoom();
     if (assetsLoaded && layout) buildFurnitureInstances(layout);
+    // Also refit active terminal
+    handleTerminalResize();
   }
+
+  // ── Terminal management ──────────────────────────────────────────────────
+
+  function openOrSwitchTerminal(sessionId) {
+    // If this session already has a local terminal, toggle panel visibility
+    const existingTermId = sessionTerminals.get(sessionId);
+    if (existingTermId && openTerminals.has(existingTermId)) {
+      const panel = document.getElementById('terminal-panel');
+      if (panel.classList.contains('open') && activeTerminalId === existingTermId) {
+        minimizeTerminalPanel();
+      } else {
+        showTerminalPanel(existingTermId);
+      }
+      return;
+    }
+    // Check if the server has a terminal for this session (e.g. after page reload)
+    const session = allSessions.find(s => s.id === sessionId);
+    if (session && session.terminalId) {
+      reconnectTerminal(session.terminalId, sessionId);
+      return;
+    }
+    // No terminal — no-op
+  }
+
+  // Detect if running inside Tauri
+  const isTauri = !!(window.__TAURI__);
+
+  // Connect terminal via Tauri IPC (Rust PTY)
+  function connectTerminalTauri(terminalId) {
+    const entry = openTerminals.get(terminalId);
+    if (!entry) return;
+    const { xterm } = entry;
+
+    // Load WebGL addon
+    try {
+      if (!entry._webglLoaded) {
+        const webglAddon = new window.WebglAddon.WebglAddon();
+        xterm.loadAddon(webglAddon);
+        entry._webglLoaded = true;
+      }
+    } catch (e) {
+      console.warn('[terminal] WebGL addon failed:', e);
+    }
+
+    // Listen for PTY output from Rust
+    const unlisten = window.__TAURI__.event.listen(`pty-data-${terminalId}`, (event) => {
+      xterm.write(event.payload);
+    });
+    const unlistenExit = window.__TAURI__.event.listen(`pty-exit-${terminalId}`, () => {
+      xterm.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n');
+      killTerminalTab(terminalId);
+    });
+
+    // Store cleanup functions
+    entry._tauriUnlisten = async () => {
+      (await unlisten)();
+      (await unlistenExit)();
+    };
+
+    // Mark as "connected" with a fake ws object for compatibility
+    entry.ws = {
+      readyState: WebSocket.OPEN,
+      send(msgStr) {
+        const msg = JSON.parse(msgStr);
+        if (msg.type === 'terminal_input') {
+          window.__TAURI__.core.invoke('pty_write', { terminalId, data: msg.data });
+        } else if (msg.type === 'terminal_resize') {
+          window.__TAURI__.core.invoke('pty_resize', { terminalId, cols: msg.cols, rows: msg.rows });
+        }
+      },
+      close() {}
+    };
+  }
+
+  // Connect (or reconnect) a terminal WebSocket with auto-retry on disconnect
+  function connectTerminalWs(terminalId) {
+    const entry = openTerminals.get(terminalId);
+    if (!entry) return;
+
+    const { xterm } = entry;
+    let dead = false; // true once terminal process exited — stop reconnecting
+
+    const termWs = new WebSocket(`ws://${location.host}/ws/terminal?id=${terminalId}`);
+    entry.ws = termWs;
+
+    termWs.onopen = () => {
+      try {
+        // Only load WebGL addon once (on initial connect)
+        if (!entry._webglLoaded) {
+          const webglAddon = new window.WebglAddon.WebglAddon();
+          xterm.loadAddon(webglAddon);
+          entry._webglLoaded = true;
+        }
+      } catch (e) {
+        console.warn('[terminal] WebGL addon failed:', e);
+      }
+    };
+
+    termWs.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === 'terminal_output') {
+          xterm.write(msg.data);
+        } else if (msg.type === 'terminal_exit') {
+          dead = true;
+          xterm.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n');
+          killTerminalTab(terminalId);
+        }
+      } catch {}
+    };
+
+    termWs.onclose = () => {
+      if (dead) return;
+      // Only reconnect if this terminal is still tracked
+      if (!openTerminals.has(terminalId)) return;
+      xterm.write('\r\n\x1b[90m[reconnecting...]\x1b[0m');
+      setTimeout(() => {
+        if (openTerminals.has(terminalId)) connectTerminalWs(terminalId);
+      }, 2000);
+    };
+  }
+
+  // Connect terminal — picks Tauri IPC or WebSocket based on environment
+  function connectTerminal(terminalId) {
+    if (isTauri) {
+      connectTerminalTauri(terminalId);
+    } else {
+      connectTerminalWs(terminalId);
+    }
+  }
+
+  function createXterm() {
+    const xterm = new window.Terminal({
+      cursorBlink: true,
+      cursorStyle: 'block',
+      fontSize: 14,
+      fontFamily: "'JetBrains Mono', 'Menlo', monospace",
+      fontWeight: 400,
+      fontWeightBold: 700,
+      letterSpacing: 0,
+      lineHeight: 1.2,
+      theme: TERMINAL_THEME,
+      allowTransparency: false,
+      scrollback: 10000,
+      minimumContrastRatio: 1,
+    });
+    const fitAddon = new window.FitAddon.FitAddon();
+    xterm.loadAddon(fitAddon);
+    return { xterm, fitAddon };
+  }
+
+  function reconnectTerminal(terminalId, sessionId) {
+    const ch = characters.get(sessionId);
+    const name = ch?.name || nextAvailableName();
+    const { xterm, fitAddon } = createXterm();
+
+    // Forward keystrokes to current WS (looked up dynamically)
+    xterm.onData((data) => {
+      const entry = openTerminals.get(terminalId);
+      if (entry?.ws?.readyState === WebSocket.OPEN) {
+        entry.ws.send(JSON.stringify({ type: 'terminal_input', data }));
+      }
+    });
+
+    openTerminals.set(terminalId, { xterm, ws: null, fitAddon, name, sessionId });
+    sessionTerminals.set(sessionId, terminalId);
+    connectTerminal(terminalId);
+    showTerminalPanel(terminalId);
+  }
+
+  async function launchTerminal(cwd, sessionId, charName) {
+    let terminalId;
+
+    if (isTauri) {
+      // Spawn PTY via Rust backend
+      const id = `term-${Date.now()}`;
+      const workDir = cwd || '/';
+      try {
+        const result = await window.__TAURI__.core.invoke('pty_spawn', {
+          cols: 120, rows: 30,
+          cwd: workDir,
+          terminalId: id,
+        });
+        terminalId = result.terminal_id;
+        // Register with Bun server so hooks can track this terminal
+        fetch('/api/terminal/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ terminalId, cwd: workDir }),
+        }).catch(() => {});
+      } catch (e) {
+        console.error('[terminal] Tauri PTY spawn failed:', e);
+        return;
+      }
+    } else {
+      // Spawn PTY via Bun server
+      const res = await fetch('/api/terminal/spawn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: cwd || '' }),
+      });
+      const resp = await res.json();
+      terminalId = resp.terminalId;
+    }
+
+    if (!terminalId) return;
+
+    const { xterm, fitAddon } = createXterm();
+    const name = charName || nextAvailableName();
+
+    // Forward keystrokes
+    xterm.onData((data) => {
+      const entry = openTerminals.get(terminalId);
+      if (entry?.ws?.readyState === WebSocket.OPEN) {
+        entry.ws.send(JSON.stringify({ type: 'terminal_input', data }));
+      }
+    });
+
+    openTerminals.set(terminalId, { xterm, ws: null, fitAddon, name, sessionId: null });
+    connectTerminal(terminalId);
+    showTerminalPanel(terminalId);
+  }
+
+  function showTerminalPanel(terminalId) {
+    const panel = document.getElementById('terminal-panel');
+    const container = document.getElementById('terminal-container');
+
+    // Detach currently active terminal's DOM
+    if (activeTerminalId && activeTerminalId !== terminalId) {
+      const prev = openTerminals.get(activeTerminalId);
+      if (prev && prev.xterm.element) {
+        prev.xterm.element.style.display = 'none';
+      }
+    }
+
+    activeTerminalId = terminalId;
+    const term = openTerminals.get(terminalId);
+    if (!term) return;
+
+    // Restore saved width on first open
+    if (!panel.classList.contains('open') && panel._restoreWidth) {
+      panel._restoreWidth();
+    }
+
+    // Open panel + backdrop + shift camera
+    panel.classList.add('open');
+    document.getElementById('terminal-backdrop').classList.add('open');
+    if (panel._updateCameraShift) panel._updateCameraShift();
+
+
+    // Attach xterm if not yet attached
+    if (!term.xterm.element) {
+      term.xterm.open(container);
+    }
+    term.xterm.element.style.display = '';
+
+    // Fit after panel animation and send resize to trigger PTY repaint
+    const fitAndResize = () => {
+      term.fitAddon.fit();
+      if (term.ws.readyState === WebSocket.OPEN) {
+        term.ws.send(JSON.stringify({
+          type: 'terminal_resize',
+          cols: term.xterm.cols,
+          rows: term.xterm.rows,
+        }));
+        term.xterm.focus();
+      } else {
+        // WS not open yet (reconnect case) — retry shortly
+        setTimeout(fitAndResize, 200);
+      }
+    };
+    setTimeout(fitAndResize, 1050); // after 1s slide animation completes
+
+    updateTerminalTabs();
+  }
+
+  function killTerminalTab(terminalId) {
+    const term = openTerminals.get(terminalId);
+    if (term) {
+      if (term.sessionId) sessionTerminals.delete(term.sessionId);
+      term.xterm.dispose();
+      if (term._tauriUnlisten) term._tauriUnlisten();
+      if (term.ws && term.ws.readyState === WebSocket.OPEN) term.ws.close();
+      // Tell server/Tauri to kill PTY
+      if (isTauri) {
+        window.__TAURI__.core.invoke('pty_kill', { terminalId }).catch(() => {});
+      } else {
+        fetch('/api/terminal/kill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ terminalId }),
+        }).catch(() => {});
+      }
+    }
+    openTerminals.delete(terminalId);
+
+    if (activeTerminalId === terminalId) {
+      // Switch to another tab or close panel
+      const remaining = Array.from(openTerminals.keys());
+      if (remaining.length > 0) {
+        showTerminalPanel(remaining[remaining.length - 1]);
+      } else {
+        activeTerminalId = null;
+        minimizeTerminalPanel();
+      }
+    }
+    updateTerminalTabs();
+  }
+
+  function minimizeTerminalPanel() {
+    // Just hide the panel — all terminals stay alive
+    const panel = document.getElementById('terminal-panel');
+    panel.classList.remove('open');
+    document.getElementById('terminal-backdrop').classList.remove('open');
+    // Shift camera back to center
+    if (panel._updateCameraShift) panel._updateCameraShift();
+  }
+
+  function closeTerminalPanel() {
+    minimizeTerminalPanel();
+  }
+
+  function updateTerminalTabs() {
+    const tabsEl = document.getElementById('terminal-tabs');
+    if (!tabsEl) return;
+    tabsEl.innerHTML = '';
+
+    for (const [id, t] of openTerminals) {
+      const tab = document.createElement('button');
+      tab.className = `terminal-tab${id === activeTerminalId ? ' active' : ''}`;
+
+      const label = document.createElement('span');
+      label.textContent = t.name;
+      tab.appendChild(label);
+
+      const kill = document.createElement('span');
+      kill.className = 'tab-close';
+      kill.textContent = '✕';
+      kill.title = 'kill session';
+      kill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        killTerminalTab(id);
+      });
+      tab.appendChild(kill);
+
+      tab.addEventListener('click', () => showTerminalPanel(id));
+      tabsEl.appendChild(tab);
+    }
+  }
+
+  function handleTerminalResize() {
+    if (!activeTerminalId) return;
+    const term = openTerminals.get(activeTerminalId);
+    if (!term) return;
+    term.fitAddon.fit();
+    if (term.ws.readyState === WebSocket.OPEN) {
+      term.ws.send(JSON.stringify({
+        type: 'terminal_resize',
+        cols: term.xterm.cols,
+        rows: term.xterm.rows,
+      }));
+    }
+  }
+
+  // ── Left-docked terminal panel: width resize + camera pan ────────────────
+  (function setupTerminalResize() {
+    const panel = document.getElementById('terminal-panel');
+    const gameContainer = document.getElementById('game-container');
+    if (!panel) return;
+    const STORAGE_KEY = 'observatory-terminal-width';
+    const MIN_W = 300;
+    const MAX_W_RATIO = 0.75; // max 75% of screen
+
+    function saveWidth() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(panel.offsetWidth));
+    }
+
+    function restoreWidth() {
+      let w;
+      try { w = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch {}
+      if (!w || w < MIN_W) w = Math.round(window.innerWidth * 0.5);
+      w = Math.max(MIN_W, Math.min(w, window.innerWidth * MAX_W_RATIO));
+      panel.style.width = w + 'px';
+      updateCameraShift();
+    }
+
+    function updateCameraShift() {
+      if (panel.classList.contains('open')) {
+        // Floor starts at col 1. Compute its screen X (before any shift).
+        // offsetX positions visMinCol at the centering offset.
+        // Col 1 screen X = offsetX + (1 - visMinCol) * TILE_SIZE * zoom
+        // But offsetX is in canvas pixels (with dpr). Convert to CSS pixels.
+        const dpr = window.devicePixelRatio || 1;
+        const { offsetX } = computeOffset();
+        const floorScreenX = (offsetX + (1 - visMinCol) * TILE_SIZE * zoom) / dpr;
+        // Shift so terminal right edge aligns with floor start
+        gameContainer.style.transform = `translateX(${panel.offsetWidth - floorScreenX}px)`;
+      } else {
+        gameContainer.style.transform = '';
+      }
+    }
+
+    // Expose for showTerminalPanel / closeTerminalPanel
+    panel._restoreWidth = restoreWidth;
+    panel._updateCameraShift = updateCameraShift;
+
+    // ── Right-edge resize ──
+    let resizing = false, resizeStartX, resizeOrigW;
+
+    panel.querySelector('.resize-handle.rh-e').addEventListener('mousedown', (e) => {
+      resizing = true;
+      resizeStartX = e.clientX;
+      resizeOrigW = panel.offsetWidth;
+      // Disable transitions during drag for instant feedback
+      panel.style.transition = 'none';
+      gameContainer.style.transition = 'none';
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!resizing) return;
+      const dx = e.clientX - resizeStartX;
+      const newW = Math.max(MIN_W, Math.min(resizeOrigW + dx, window.innerWidth * MAX_W_RATIO));
+      panel.style.width = newW + 'px';
+      // Live-update camera shift
+      const dpr = window.devicePixelRatio || 1;
+      const { offsetX } = computeOffset();
+      const floorScreenX = (offsetX + (1 - visMinCol) * TILE_SIZE * zoom) / dpr;
+      gameContainer.style.transform = `translateX(${newW - floorScreenX}px)`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!resizing) return;
+      resizing = false;
+      // Re-enable transitions
+      panel.style.transition = '';
+      gameContainer.style.transition = '';
+      saveWidth();
+      handleTerminalResize();
+    });
+  })();
 
   // ── Bootstrap ─────────────────────────────────────────────────────────────
   async function init() {

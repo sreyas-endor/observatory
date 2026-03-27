@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+src-tauri/target/
+src-tauri/gen/
+
+# Lock files
+Cargo.lock
+
+# OS files
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Misc
+not a tty

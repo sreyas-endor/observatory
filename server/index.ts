@@ -22,6 +22,7 @@ interface Session {
   lastSeen: number;
   startedAt: number;
   stateChangedAt: number;
+  terminalId?: string;
 }
 
 // ── Types (log) ────────────────────────────────────────────────────────────
@@ -39,12 +40,114 @@ const wsClients = new Set<import("bun").ServerWebSocket<unknown>>();
 const sessionLogs = new Map<string, LogEntry[]>();
 const MAX_LOG_ENTRIES = 300;
 
-// Track pending permission timers: sessionId → timer handle
-// When PreToolUse fires for a blocking tool, we start a timer. If PostToolUse
-// arrives before it fires we cancel it. If not, the tool is waiting on a
-// permission dialog → flip to "input" so the character walks to the lounge.
-const permissionTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const PERMISSION_TIMEOUT_MS = 2500;
+// ── Terminal PTY state ────────────────────────────────────────────────────
+
+interface Terminal {
+  id: string;
+  cwd: string;
+  proc: import("bun").Subprocess;
+  subscribers: Set<import("bun").ServerWebSocket<unknown>>;
+  outputBuffer: string[];  // ring buffer of recent output chunks for replay
+}
+
+const terminals = new Map<string, Terminal>();
+const claudeToTerminal = new Map<string, string>(); // claude session_id → terminalId
+let terminalIdCounter = 0;
+const MAX_OUTPUT_BUFFER = 500; // max chunks to keep for replay
+
+const PTY_HELPER = join(import.meta.dir, "pty-helper.js");
+
+function spawnTerminal(cwd?: string): Terminal {
+  const id = `term-${++terminalIdCounter}-${Date.now()}`;
+  const workDir = cwd || process.env.HOME || "/";
+
+  const proc = spawn(["node", PTY_HELPER, "120", "30", workDir, id], {
+    cwd: workDir,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const term: Terminal = { id, cwd: workDir, proc, subscribers: new Set(), outputBuffer: [] };
+  terminals.set(id, term);
+
+  // Read newline-delimited JSON from the helper's stdout
+  const reader = proc.stdout.getReader();
+  let buffer = "";
+
+  (async () => {
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === "output") {
+              // Buffer for replay on reconnect
+              term.outputBuffer.push(msg.data);
+              if (term.outputBuffer.length > MAX_OUTPUT_BUFFER) {
+                term.outputBuffer.splice(0, term.outputBuffer.length - MAX_OUTPUT_BUFFER);
+              }
+              const payload = JSON.stringify({ type: "terminal_output", terminalId: id, data: msg.data });
+              for (const ws of term.subscribers) {
+                try { ws.send(payload); } catch { term.subscribers.delete(ws); }
+              }
+            } else if (msg.type === "exit") {
+              const payload = JSON.stringify({ type: "terminal_exit", terminalId: id, exitCode: msg.exitCode });
+              for (const ws of term.subscribers) {
+                try { ws.send(payload); } catch {}
+              }
+              terminals.delete(id);
+              // Clean up claude→terminal mapping
+              for (const [cid, tid] of claudeToTerminal) { if (tid === id) claudeToTerminal.delete(cid); }
+              // Remove session so character disappears
+              sessions.delete(id);
+              sessionLogs.delete(id);
+              broadcastSessions();
+              console.log(`[terminal] ${id} exited (code=${msg.exitCode})`);
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  })();
+
+  console.log(`[terminal] spawned ${id} (pid=${proc.pid})`);
+  return term;
+}
+
+function sendToHelper(term: Terminal, msg: unknown) {
+  try {
+    term.proc.stdin.write(new TextEncoder().encode(JSON.stringify(msg) + "\n"));
+  } catch {}
+}
+
+function resizeTerminal(id: string, cols: number, rows: number) {
+  const term = terminals.get(id);
+  if (term) sendToHelper(term, { type: "resize", cols, rows });
+}
+
+function writeTerminal(id: string, data: string) {
+  const term = terminals.get(id);
+  if (term) sendToHelper(term, { type: "input", data });
+}
+
+function killTerminal(id: string) {
+  const term = terminals.get(id);
+  if (term) {
+    sendToHelper(term, { type: "kill" });
+    term.proc.kill();
+    terminals.delete(id);
+    for (const [cid, tid] of claudeToTerminal) { if (tid === id) claudeToTerminal.delete(cid); }
+    console.log(`[terminal] killed ${id}`);
+  }
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -75,6 +178,8 @@ function pruneStale() {
   const cutoff = Date.now() - 15 * 60 * 1000;
   let pruned = false;
   for (const [id, session] of sessions) {
+    // Don't prune if a terminal is still alive for this session
+    if (terminals.has(id)) continue;
     if (session.lastSeen < cutoff) {
       sessions.delete(id);
       sessionLogs.delete(id);
@@ -105,21 +210,38 @@ function upsertSession(
   broadcastSessions();
 }
 
-// ── Claude hook handler ────────────────────────────────────────────────────
+// ── Claude hook handler (for Observatory-launched terminals) ───────────────
 
-function handleClaudeHook(body: Record<string, unknown>) {
+function handleClaudeHookForTerminal(body: Record<string, unknown>) {
   const hookEvent = (body.hook_event_name ?? body.event ?? "") as string;
-  const sessionId = (body.session_id ?? body.id ?? "") as string;
-  if (!sessionId) return;
-
   const cwd = (body.cwd ?? body.working_directory ?? "") as string;
+  const claudeSessionId = (body.session_id ?? "") as string;
+  const observatoryTerminalId = (body.observatory_terminal_id ?? "") as string;
   const toolName = (
     (body.tool_name as string) ??
     ((body.tool_input as Record<string, unknown>)?.tool_name as string) ??
     ""
   ).toLowerCase();
 
-  let state: SessionState = "idle";
+  // Resolve terminal id: use env-injected id, or look up from prior mapping
+  let terminalId = observatoryTerminalId || (claudeSessionId ? claudeToTerminal.get(claudeSessionId) : "");
+  if (!terminalId || !terminals.has(terminalId)) return; // not from an Observatory terminal
+
+  // Establish claude session → terminal mapping on first hook
+  if (claudeSessionId && !claudeToTerminal.has(claudeSessionId)) {
+    claudeToTerminal.set(claudeSessionId, terminalId);
+    console.log(`[hook] linked claude session ${claudeSessionId} → terminal ${terminalId}`);
+  }
+
+  // Create Observatory session on first hook (character appears when Claude starts)
+  let session = sessions.get(terminalId);
+  if (!session) {
+    upsertSession(terminalId, "claude", cwd, "thinking");
+    session = sessions.get(terminalId)!;
+    session.terminalId = terminalId;
+  }
+
+  let state: SessionState = session.state;
 
   if (hookEvent === "UserPromptSubmit") {
     state = "thinking";
@@ -138,107 +260,40 @@ function handleClaudeHook(body: Record<string, unknown>) {
       state = "thinking";
     }
   } else if (hookEvent === "PostToolUse") {
-    // Cancel any pending permission timer — tool completed without blocking
-    const t = permissionTimers.get(sessionId);
-    if (t !== undefined) {
-      clearTimeout(t);
-      permissionTimers.delete(sessionId);
-    }
-    state = "idle";
+    state = "thinking";
   } else if (hookEvent === "Stop") {
-    const t = permissionTimers.get(sessionId);
-    if (t !== undefined) {
-      clearTimeout(t);
-      permissionTimers.delete(sessionId);
-    }
     state = "waiting";
   }
 
-  upsertSession(sessionId, "claude", cwd, state);
+  upsertSession(terminalId, "claude", cwd, state);
+  const s = sessions.get(terminalId);
+  if (s) s.terminalId = terminalId;
 
   // ── Append log entry ───────────────────────────────────────────────────
   const toolInput = body.tool_input as Record<string, unknown> | undefined;
   if (hookEvent === "UserPromptSubmit") {
-    appendLog(sessionId, { ts: Date.now(), kind: "prompt" });
+    appendLog(terminalId, { ts: Date.now(), kind: "prompt" });
   } else if (hookEvent === "PreToolUse") {
     if (/^askuserquestion$/i.test(toolName)) {
       const q = toolInput?.question as string | undefined;
-      appendLog(sessionId, { ts: Date.now(), kind: "input", detail: q ? q.slice(0, 80) : undefined });
+      appendLog(terminalId, { ts: Date.now(), kind: "input", detail: q ? q.slice(0, 80) : undefined });
     } else if (/^(read|grep|glob)/i.test(toolName)) {
       const p = (toolInput?.file_path ?? toolInput?.path ?? toolInput?.pattern) as string | undefined;
-      appendLog(sessionId, { ts: Date.now(), kind: "read", detail: p ? basename(p) : toolName });
+      appendLog(terminalId, { ts: Date.now(), kind: "read", detail: p ? basename(p) : toolName });
     } else if (/^(edit|write|multiedit)/i.test(toolName)) {
       const p = toolInput?.file_path as string | undefined;
-      appendLog(sessionId, { ts: Date.now(), kind: "edit", detail: p ? basename(p) : toolName });
+      appendLog(terminalId, { ts: Date.now(), kind: "edit", detail: p ? basename(p) : toolName });
     } else if (/^bash/i.test(toolName)) {
       const cmd = toolInput?.command as string | undefined;
-      appendLog(sessionId, { ts: Date.now(), kind: "bash", detail: cmd ? cmd.slice(0, 60) : undefined });
+      appendLog(terminalId, { ts: Date.now(), kind: "bash", detail: cmd ? cmd.slice(0, 60) : undefined });
     } else if (/mcp/i.test(toolName)) {
-      appendLog(sessionId, { ts: Date.now(), kind: "mcp", detail: toolName });
+      appendLog(terminalId, { ts: Date.now(), kind: "mcp", detail: toolName });
     } else {
-      appendLog(sessionId, { ts: Date.now(), kind: "thinking" });
+      appendLog(terminalId, { ts: Date.now(), kind: "thinking" });
     }
-  } else if (hookEvent === "Stop") {
-    appendLog(sessionId, { ts: Date.now(), kind: "done" });
+  } else if (hookEvent === "PostToolUse") {
+    // No log for PostToolUse — it's a transition state
   }
-
-  // After upserting, if this was a PreToolUse for a blocking tool (not AskUserQuestion
-  // which is already "input", and not read-type tools which take long and don't need approval),
-  // start a permission-wait timer.
-  if (hookEvent === "PreToolUse" && state !== "input" && state !== "reading") {
-    // Cancel any previous timer for this session
-    const existing = permissionTimers.get(sessionId);
-    if (existing !== undefined) clearTimeout(existing);
-
-    const timer = setTimeout(() => {
-      permissionTimers.delete(sessionId);
-      const session = sessions.get(sessionId);
-      // Only flip to input if still in a tool-use state (not already done/idle)
-      if (session && session.state !== "idle" && session.state !== "waiting" && session.state !== "input") {
-        upsertSession(sessionId, session.type, session.cwd, "input");
-      }
-    }, PERMISSION_TIMEOUT_MS);
-    permissionTimers.set(sessionId, timer);
-  }
-}
-
-// ── Cursor hook handler ────────────────────────────────────────────────────
-
-function handleCursorHook(body: Record<string, unknown>) {
-  const event = (body.hook_event_name ?? body.event ?? body.type ?? body.hook ?? "") as string;
-  const sessionId = (body.conversation_id ?? body.session_id ?? body.id ?? "") as string;
-  if (!sessionId) return;
-
-  const workspaceRoots = body.workspace_roots as string[] | undefined;
-  const cwd = (workspaceRoots?.[0] ?? body.cwd ?? body.workspaceRoot ?? body.workspace ?? "") as string;
-  const status = (body.status ?? "") as string;
-
-  let state: SessionState = "idle";
-
-  switch (event) {
-    case "beforeReadFile":
-      state = "reading";
-      break;
-    case "afterFileEdit":
-      state = "editing";
-      break;
-    case "beforeShellExecution":
-      state = "running";
-      break;
-    case "beforeMCPExecution":
-      state = "mcp";
-      break;
-    case "beforeSubmitPrompt":
-      state = "thinking";
-      break;
-    case "stop":
-      state = status === "error" ? "error" : "waiting";
-      break;
-    default:
-      state = "idle";
-  }
-
-  upsertSession(sessionId, "cursor", cwd, state);
 }
 
 // ── Static file serving ────────────────────────────────────────────────────
@@ -299,24 +354,77 @@ const server = serve({
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    // WebSocket upgrade
+    // WebSocket upgrade — main dashboard
     if (pathname === "/ws") {
-      const upgraded = server.upgrade(req);
+      const upgraded = server.upgrade(req, { data: { kind: "dashboard" } });
       if (upgraded) return undefined;
       return new Response("WebSocket upgrade failed", { status: 400 });
     }
 
-    // Hook endpoints
-    if (req.method === "POST" && pathname === "/hook/claude") {
+    // WebSocket upgrade — terminal I/O
+    if (pathname === "/ws/terminal") {
+      const terminalId = url.searchParams.get("id");
+      if (!terminalId || !terminals.has(terminalId)) {
+        return new Response("Unknown terminal", { status: 404 });
+      }
+      const upgraded = server.upgrade(req, { data: { kind: "terminal", terminalId } });
+      if (upgraded) return undefined;
+      return new Response("WebSocket upgrade failed", { status: 400 });
+    }
+
+    // Spawn a new terminal — returns { terminalId, sessionId }
+    if (req.method === "POST" && pathname === "/api/terminal/spawn") {
       return readJSON(req).then((body) => {
-        handleClaudeHook(body);
+        const cwd = (body.cwd as string) || undefined;
+        const term = spawnTerminal(cwd);
+        // Don't create a session yet — character appears when Claude CLI hooks fire.
+        // Just return the terminal id so the client can open the tab.
+        return new Response(JSON.stringify({ terminalId: term.id }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+    }
+
+    // Register an external terminal (e.g. Tauri Rust PTY) so hooks can track it
+    if (req.method === "POST" && pathname === "/api/terminal/register") {
+      return readJSON(req).then((body) => {
+        const id = body.terminalId as string;
+        const cwd = (body.cwd as string) || process.env.HOME || "/";
+        if (id && !terminals.has(id)) {
+          terminals.set(id, {
+            id,
+            cwd,
+            proc: null as any, // no subprocess — managed externally
+            subscribers: new Set(),
+            outputBuffer: [],
+          });
+          console.log(`[terminal] registered external terminal ${id}`);
+        }
+        return new Response(JSON.stringify({ terminalId: id }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+    }
+
+    // Kill a terminal
+    if (req.method === "POST" && pathname === "/api/terminal/kill") {
+      return readJSON(req).then((body) => {
+        const id = body.terminalId as string;
+        if (id) {
+          killTerminal(id);
+          // Remove the session so the character disappears
+          sessions.delete(id);
+          sessionLogs.delete(id);
+          broadcastSessions();
+        }
         return new Response("{}", { headers: { "Content-Type": "application/json" } });
       });
     }
 
-    if (req.method === "POST" && pathname === "/hook/cursor") {
+    // Hook endpoints — process hooks but only update existing terminal sessions
+    if (req.method === "POST" && pathname === "/hook/claude") {
       return readJSON(req).then((body) => {
-        handleCursorHook(body);
+        handleClaudeHookForTerminal(body);
         return new Response("{}", { headers: { "Content-Type": "application/json" } });
       });
     }
@@ -327,37 +435,67 @@ const server = serve({
 
   websocket: {
     open(ws) {
+      const meta = ws.data as { kind: string; terminalId?: string };
+
+      if (meta.kind === "terminal") {
+        // Subscribe to terminal output
+        const term = terminals.get(meta.terminalId!);
+        if (term) {
+          term.subscribers.add(ws);
+          // Replay buffered output so reconnecting clients see the current screen
+          if (term.outputBuffer.length > 0) {
+            const replay = term.outputBuffer.join("");
+            ws.send(JSON.stringify({ type: "terminal_output", terminalId: term.id, data: replay }));
+          }
+          // Send a ready signal
+          ws.send(JSON.stringify({ type: "terminal_ready", terminalId: term.id }));
+        } else {
+          ws.close(1008, "Terminal not found");
+        }
+        return;
+      }
+
+      // Dashboard client
       wsClients.add(ws);
       ws.send(JSON.stringify({ type: "sessions", data: Array.from(sessions.values()) }));
-      // Send full log history for all sessions
       const logs: Record<string, LogEntry[]> = {};
       for (const [id, entries] of sessionLogs) logs[id] = entries;
       ws.send(JSON.stringify({ type: "logs", data: logs }));
     },
     close(ws) {
+      const meta = ws.data as { kind: string; terminalId?: string };
+
+      if (meta.kind === "terminal") {
+        const term = terminals.get(meta.terminalId!);
+        if (term) term.subscribers.delete(ws);
+        return;
+      }
+
       wsClients.delete(ws);
     },
-    message(_ws, msg) {
-      try {
-        const data = JSON.parse(msg.toString()) as Record<string, unknown>;
-        if (data.type === "focus") {
-          const sessionId = data.sessionId as string;
-          const session = sessions.get(sessionId);
-          console.log(`[focus] sessionId=${sessionId} session=${JSON.stringify(session)}`);
-          if (session?.type === "claude") {
-            focusGhostty();
+    message(ws, msg) {
+      const meta = ws.data as { kind: string; terminalId?: string };
+
+      if (meta.kind === "terminal") {
+        // Terminal input — forward to PTY
+        try {
+          const data = JSON.parse(msg.toString()) as Record<string, unknown>;
+          if (data.type === "terminal_input" && typeof data.data === "string") {
+            writeTerminal(meta.terminalId!, data.data);
+          } else if (data.type === "terminal_resize") {
+            resizeTerminal(meta.terminalId!, data.cols as number, data.rows as number);
           }
-        }
+        } catch { /* ignore */ }
+        return;
+      }
+
+      // Dashboard messages (reserved for future use)
+      try {
+        JSON.parse(msg.toString());
       } catch { /* ignore malformed messages */ }
     },
   },
 });
-
-// ── Ghostty focus via AppleScript ──────────────────────────────────────────
-
-function focusGhostty() {
-  spawn(["osascript", "-e", 'tell application "Ghostty" to activate']);
-}
 
 // Prune stale sessions every 30 seconds, also re-broadcast for keepalive
 setInterval(() => {
@@ -369,4 +507,3 @@ console.log("Observatory running at http://localhost:7337");
 console.log(`WebSocket endpoint: ws://localhost:7337/ws`);
 console.log(`Hook endpoints:`);
 console.log(`  POST http://localhost:7337/hook/claude`);
-console.log(`  POST http://localhost:7337/hook/cursor`);
