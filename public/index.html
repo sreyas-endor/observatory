@@ -7,278 +7,32 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    html, body {
-      width: 100%; height: 100%;
-      background: #1a1a2e;
-      overflow: hidden;
-      font-family: 'Courier New', Courier, monospace;
-    }
-
-    body { display: flex; }
-
-    #game-container {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex: 1;
-      height: 100%;
-      min-width: 0;
-      transition: transform 1s cubic-bezier(0.25, 0.1, 0.25, 1);
-    }
-
-    canvas {
-      display: block;
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
-    }
-
-    #status-bar {
-      position: fixed;
-      bottom: 8px; right: 12px;
-      font-size: 11px; color: #555;
-      letter-spacing: 0.05em;
-      z-index: 10;
-    }
-    #status-bar .dot {
-      display: inline-block;
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: #e74c3c;
-      margin-right: 5px;
-      vertical-align: middle;
-    }
-    #status-bar .dot.connected { background: #2ecc71; }
-
-    /* ── FAB (Floating Action Button) ─────────────────────────────── */
-    #fab {
-      position: fixed;
-      bottom: 28px;
-      right: 28px;
-      z-index: 30;
-    }
-
-    #fab-btn {
-      width: 48px; height: 48px;
-      border-radius: 50%;
-      background: #1a1a2e;
-      border: 2px solid #3e4451;
-      color: #e5e5e5;
-      font-size: 22px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-      transition: transform 0.18s ease, background 0.15s;
-    }
-    #fab-btn:hover { background: #282c34; transform: scale(1.08); }
-    #fab-btn.open { transform: rotate(45deg); }
-
-    #fab-menu {
-      position: absolute;
-      bottom: 60px;
-      right: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      opacity: 0;
-      pointer-events: none;
-      transform: translateY(10px);
-      transition: opacity 0.18s ease, transform 0.18s ease;
-    }
-    #fab-menu.open {
-      opacity: 1;
-      pointer-events: auto;
-      transform: translateY(0);
-    }
-
-    .fab-agent {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 18px 10px 10px;
-      background: #111118;
-      border: 2px solid #2a2d3a;
-      border-radius: 12px;
-      cursor: pointer;
-      white-space: nowrap;
-      min-width: 200px;
-      transition: background 0.12s, border-color 0.12s;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    }
-    .fab-agent:hover { background: #2a2d3a; border-color: #5566cc; }
-
-    .fab-agent-face {
-      width: 36px; height: 36px;
-      border-radius: 6px;
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
-      background: #282c34;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      overflow: hidden;
-    }
-    .fab-agent-face canvas {
-      display: block;
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
-    }
-
-    .fab-agent-info {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .fab-agent-name {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 13px;
-      font-weight: 700;
-      color: #e5e5e5;
-    }
-    .fab-agent-status {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-    }
-    .fab-agent-status.running { color: #2ecc71; }
-    .fab-agent-status.inactive { color: #cc4444; }
-
-    /* ── Terminal panel — left-docked side panel ────────────────────── */
-    #terminal-backdrop {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.35);
-      z-index: 24;
-      pointer-events: none;
-    }
-    #terminal-backdrop.open { display: block; }
-
-    #terminal-panel {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 50vw;
-      height: 100vh;
-      background: #282c34;
-      border-right: 2px solid #3e4451;
-      display: flex;
-      flex-direction: column;
-      z-index: 25;
-      box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
-      transform: translateX(-100%);
-      transition: transform 1s cubic-bezier(0.25, 0.1, 0.25, 1);
-      overflow: visible;
-      min-width: 300px;
-    }
-    #terminal-panel.open {
-      transform: translateX(0);
-    }
-
-    /* ── Right-edge resize handle ── */
-    #terminal-panel .resize-handle {
-      position: absolute;
-      z-index: 30;
-    }
-    #terminal-panel .rh-e {
-      right: -4px;
-      top: 0;
-      bottom: 0;
-      width: 8px;
-      cursor: ew-resize;
-    }
-
-    #terminal-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: #21252b;
-      padding: 0 8px;
-      height: 34px;
-      flex-shrink: 0;
-      border-bottom: 1px solid #3e4451;
-    }
-
-    #terminal-tabs {
-      display: flex;
-      gap: 0;
-      overflow-x: auto;
-      flex: 1;
-    }
-
-    .terminal-tab {
-      padding: 4px 14px;
-      font-size: 12px;
-      font-family: 'JetBrains Mono', 'Menlo', monospace;
-      color: #636d83;
-      background: transparent;
-      border: none;
-      border-bottom: 2px solid transparent;
-      cursor: pointer;
-      white-space: nowrap;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      transition: color 0.15s;
-    }
-    .terminal-tab:hover { color: #abb2bf; }
-    .terminal-tab.active {
-      color: #e5e5e5;
-      border-bottom-color: #61afef;
-      background: rgba(255,255,255,0.03);
-    }
-    .terminal-tab .tab-close {
-      font-size: 9px;
-      color: #636d83;
-      cursor: pointer;
-      padding: 2px 3px;
-      border-radius: 3px;
-    }
-    .terminal-tab .tab-close:hover { color: #e06c75; background: rgba(224,108,117,0.12); }
-
-    #terminal-actions {
-      display: flex;
-      gap: 4px;
-      flex-shrink: 0;
-    }
-
-    #terminal-close {
-      background: none;
-      border: none;
-      color: #636d83;
-      font-size: 14px;
-      cursor: pointer;
-      padding: 2px 6px;
-      border-radius: 3px;
-    }
-    #terminal-close:hover { color: #e06c75; background: rgba(224,108,117,0.12); }
-
-    #terminal-container {
-      flex: 1;
-      position: relative;
-      overflow: hidden;
-      background: #282c34;
-    }
-
-    #terminal-container .xterm {
-      height: 100%;
-      padding: 2px 0 0 6px;
-    }
-
-    /* Hide xterm scrollbar to match Ghostty's clean look */
-    #terminal-container .xterm-viewport::-webkit-scrollbar { width: 6px; }
-    #terminal-container .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
-    #terminal-container .xterm-viewport::-webkit-scrollbar-thumb { background: #3e4451; border-radius: 3px; }
-    #terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #4b5263; }
-
-  </style>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div id="game-container"></div>
+
+  <!-- Search button (top-right) -->
+  <button id="search-btn" title="Search files (⌘P)">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+  </button>
+
+  <!-- Command palette overlay -->
+  <div id="cmd-palette-overlay">
+    <div id="cmd-palette">
+      <div id="cmd-palette-input-wrap">
+        <span id="cmd-palette-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </span>
+        <input id="cmd-palette-input" type="text" placeholder="Search files by name..." autocomplete="off" spellcheck="false" />
+      </div>
+      <div id="cmd-palette-results"></div>
+    </div>
+  </div>
 
   <div id="status-bar">
     <span class="dot" id="ws-dot"></span>
@@ -315,6 +69,48 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+
+  <!-- CodeMirror 6 (ESM via esm.sh) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "codemirror": "https://esm.sh/*codemirror@6.0.1",
+      "@codemirror/view": "https://esm.sh/*@codemirror/view@6.36.5",
+      "@codemirror/state": "https://esm.sh/*@codemirror/state@6.5.2",
+      "@codemirror/language": "https://esm.sh/*@codemirror/language@6.11.0",
+      "@codemirror/commands": "https://esm.sh/*@codemirror/commands@6.8.1",
+      "@codemirror/search": "https://esm.sh/*@codemirror/search@6.5.10",
+      "@codemirror/autocomplete": "https://esm.sh/*@codemirror/autocomplete@6.18.6",
+      "@codemirror/lang-javascript": "https://esm.sh/*@codemirror/lang-javascript@6.2.3",
+      "@codemirror/lang-json": "https://esm.sh/*@codemirror/lang-json@6.0.1",
+      "@codemirror/lang-html": "https://esm.sh/*@codemirror/lang-html@6.4.9",
+      "@codemirror/lang-css": "https://esm.sh/*@codemirror/lang-css@6.3.1",
+      "@codemirror/lang-python": "https://esm.sh/*@codemirror/lang-python@6.1.7",
+      "@codemirror/lang-rust": "https://esm.sh/*@codemirror/lang-rust@6.0.2",
+      "@codemirror/lang-go": "https://esm.sh/*@codemirror/lang-go@6.0.1",
+      "@codemirror/lang-markdown": "https://esm.sh/*@codemirror/lang-markdown@6.3.2",
+      "@codemirror/theme-one-dark": "https://esm.sh/*@codemirror/theme-one-dark@6.1.2",
+      "@lezer/common": "https://esm.sh/*@lezer/common@1.2.3",
+      "@lezer/highlight": "https://esm.sh/*@lezer/highlight@1.2.1",
+      "@lezer/lr": "https://esm.sh/*@lezer/lr@1.4.2",
+      "@lezer/javascript": "https://esm.sh/*@lezer/javascript@1.4.21",
+      "@lezer/json": "https://esm.sh/*@lezer/json@1.0.2",
+      "@lezer/html": "https://esm.sh/*@lezer/html@1.3.10",
+      "@lezer/css": "https://esm.sh/*@lezer/css@1.1.9",
+      "@lezer/python": "https://esm.sh/*@lezer/python@1.1.15",
+      "@lezer/rust": "https://esm.sh/*@lezer/rust@1.0.2",
+      "@lezer/go": "https://esm.sh/*@lezer/go@1.0.0",
+      "@lezer/markdown": "https://esm.sh/*@lezer/markdown@1.4.1",
+      "style-mod": "https://esm.sh/*style-mod@4.1.2",
+      "w3c-keyname": "https://esm.sh/*w3c-keyname@2.2.8",
+      "crelt": "https://esm.sh/*crelt@1.0.6",
+      "@marijn/find-cluster-break": "https://esm.sh/*@marijn/find-cluster-break@1.0.2"
+    }
+  }
+  </script>
+  <script type="module" src="file-viewer.js"></script>
+  <script src="file-link-provider.js"></script>
+<script src="command-palette.js"></script>
 
   <script src="game.js"></script>
 </body>

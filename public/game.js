@@ -21,7 +21,9 @@
   const DIR   = { DOWN: 'down', UP: 'up', RIGHT: 'right', LEFT: 'left' };
 
   // Famous dev names matched to sprite gender (char_1 and char_3 are female)
-  const CHAR_NAMES = ['Linus', 'Hopper', 'Carmack', 'Lovelace', 'Karpathy', 'Knuth'];
+  const MAX_AGENTS = 4;
+  const CHAR_SLOTS  = [0, 3, 4, 5];  // sprite indices: char_0, char_3, char_4, char_5
+  const CHAR_NAMES  = ['Linus', 'Knuth', 'Carmack', 'Karpathy'];
 
   // Activity pill colours
   const ACTIVITY_COLORS = {
@@ -77,6 +79,8 @@
   const SEAT_DEFS = [
     { seatId: 'seat-0', col: 3, row: 14, dir: DIR.UP },
     { seatId: 'seat-1', col: 7, row: 14, dir: DIR.UP },
+    { seatId: 'seat-2', col: 3, row: 16, dir: DIR.RIGHT, seatOffX: 0, seatOffY: -4 },
+    { seatId: 'seat-3', col: 7, row: 16, dir: DIR.LEFT,  seatOffX: 0, seatOffY: -4 },
   ];
 
 
@@ -433,6 +437,15 @@
     }
   }
 
+  function getSeatOffset(ch) {
+    if (ch.state !== STATE.TYPE) return { x: 0, y: 0 };
+    const seat = ch.seatId ? SEAT_DEFS.find(s => s.seatId === ch.seatId) : null;
+    if (seat && (seat.seatOffX || seat.seatOffY)) {
+      return { x: seat.seatOffX || 0, y: seat.seatOffY || 0 };
+    }
+    return { x: 0, y: CHAR_SITTING_OFFSET };
+  }
+
   // ── Character management ──────────────────────────────────────────────────
   function createCharacter(sessionId, type, seatId, isActive) {
     const seat = SEAT_DEFS.find(s => s.seatId === seatId) || null;
@@ -446,11 +459,12 @@
       col = 1; row = 11;
     }
     const center  = tileCenter(col, row);
-    const palette = charSlotCounter % 6;
+    const slot = charSlotCounter % MAX_AGENTS;
+    const palette = CHAR_SLOTS[slot];
     charSlotCounter++;
     return {
       sessionId, type, seatId,
-      name:     CHAR_NAMES[palette],
+      name:     CHAR_NAMES[slot],
       palette,
       state:    STATE.TYPE,
       dir:      seat ? seat.dir : DIR.DOWN,
@@ -592,6 +606,7 @@
     for (const session of newSessions) {
       let ch = characters.get(session.id);
       if (!ch) {
+        if (characters.size >= MAX_AGENTS) continue; // cap at 4 agents
         const seatId = assignSeat();
         // Initialize isActive correctly so applySessionState sees no fake transition
         const active = !['waiting', 'error'].includes(session.state);
@@ -626,7 +641,6 @@
         }
         if (!ch.isActive) {
           if (ch.seatTimer > 0) { ch.seatTimer -= dt; break; }
-          if (ch.seatTimer < 0) ch.seatTimer = 0;
           ch.state = STATE.IDLE;
           ch.frame = 0; ch.frameTimer = 0;
           ch.wanderTimer = randRange(WANDER_PAUSE_MIN, WANDER_PAUSE_MAX);
@@ -941,14 +955,14 @@
     for (const ch of characters.values()) {
       const sprite = getCharSprite(ch);
       if (!sprite) continue;
-      const sittingOff = ch.state === STATE.TYPE ? CHAR_SITTING_OFFSET : 0;
+      const seatOff = getSeatOffset(ch);
       const sw    = CHAR_W * zoom;
       const sh    = CHAR_H * zoom;
-      const drawX = Math.round(offsetX + ch.x * zoom - sw / 2);
-      const drawY = Math.round(offsetY + (ch.y + sittingOff) * zoom - sh);
-      const footY = Math.round(offsetY + (ch.y + sittingOff) * zoom);
+      const drawX = Math.round(offsetX + (ch.x + seatOff.x) * zoom - sw / 2);
+      const drawY = Math.round(offsetY + (ch.y + seatOff.y) * zoom - sh);
+      const footY = Math.round(offsetY + (ch.y + seatOff.y) * zoom);
       const charZY = ch.y + TILE_SIZE / 2 + CHARACTER_Z_SORT_OFFSET;
-      const cx    = Math.round(offsetX + ch.x * zoom);
+      const cx    = Math.round(offsetX + (ch.x + seatOff.x) * zoom);
 
       drawables.push({ zY: charZY, draw: () => {
         ctx.imageSmoothingEnabled = false;
@@ -969,11 +983,11 @@
       const bubbleSrc = ch.bubbleType === 'sleeping' ? bubbleSleepingCanvas : bubblePermissionCanvas;
       if (!bubbleSrc) continue;
 
-      const sittingOff = ch.state === STATE.TYPE ? CHAR_SITTING_OFFSET : 0;
+      const seatOff = getSeatOffset(ch);
       const bw = bubbleSrc.width  * zoom;
       const bh = bubbleSrc.height * zoom;
-      const bx = Math.round(offsetX + ch.x * zoom - bw / 2);
-      const by = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET) * zoom - bh - zoom);
+      const bx = Math.round(offsetX + (ch.x + seatOff.x) * zoom - bw / 2);
+      const by = Math.round(offsetY + (ch.y + seatOff.y - BUBBLE_VERTICAL_OFFSET) * zoom - bh - zoom);
 
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(bubbleSrc, bx, by, bw, bh);
@@ -1003,11 +1017,11 @@
   function getCharacterAt(px, py) {
     const { offsetX, offsetY } = computeOffset();
     for (const [id, ch] of characters.entries()) {
-      const sittingOff = ch.state === STATE.TYPE ? CHAR_SITTING_OFFSET : 0;
+      const seatOff = getSeatOffset(ch);
       const sw    = CHAR_W * zoom;
       const sh    = CHAR_H * zoom;
-      const drawX = Math.round(offsetX + ch.x * zoom - sw / 2);
-      const drawY = Math.round(offsetY + (ch.y + sittingOff) * zoom - sh);
+      const drawX = Math.round(offsetX + (ch.x + seatOff.x) * zoom - sw / 2);
+      const drawY = Math.round(offsetY + (ch.y + seatOff.y) * zoom - sh);
       if (px >= drawX && px <= drawX + sw && py >= drawY && py <= drawY + sh) {
         return { id, ch };
       }
@@ -1083,7 +1097,7 @@
     for (let i = 0; i < FAB_SLOTS; i++) {
       const name = CHAR_NAMES[i] || `Agent ${i + 1}`;
 
-      // Find if this agent slot has a running terminal
+      // Find if this agent slot has a running terminal (client-side)
       let termEntry = null;
       let sessionEntry = null;
       for (const [tid, t] of openTerminals) {
@@ -1093,8 +1107,19 @@
         sessionEntry = allSessions.find(s => s.id === termEntry.sessionId);
       }
 
-      const isActive = !!(sessionEntry);
-      const hasTerminal = !!(termEntry);
+      // Fallback: check if a character with this name exists with a server-side terminal (e.g. after reload)
+      let serverSession = null;
+      if (!termEntry) {
+        for (const [, ch] of characters) {
+          if (ch.name === name) {
+            const session = allSessions.find(s => s.id === ch.sessionId && s.terminalId);
+            if (session) { serverSession = session; break; }
+          }
+        }
+      }
+
+      const isActive = !!(sessionEntry || serverSession);
+      const hasTerminal = !!(termEntry || serverSession);
 
       const card = document.createElement('div');
       card.className = `fab-agent${isActive ? ' active' : ''}${!hasTerminal ? ' inactive' : ''}`;
@@ -1102,7 +1127,7 @@
       // Face sprite
       const faceWrap = document.createElement('div');
       faceWrap.className = 'fab-agent-face';
-      const faceCanvas = charFaceCanvases[i];
+      const faceCanvas = charFaceCanvases[CHAR_SLOTS[i]];
       if (faceCanvas) {
         const dc = document.createElement('canvas');
         dc.width = 36; dc.height = 36;
@@ -1136,8 +1161,10 @@
       // Click handler
       card.addEventListener('click', () => {
         closeFabMenu();
-        if (hasTerminal) {
+        if (termEntry) {
           showTerminalPanel(termEntry.terminalId);
+        } else if (serverSession) {
+          reconnectTerminal(serverSession.terminalId, serverSession.id);
         } else {
           launchTerminal(undefined, undefined, name);
         }
@@ -1380,7 +1407,7 @@
     }
   }
 
-  function createXterm() {
+  function createXterm(sessionId) {
     const xterm = new window.Terminal({
       cursorBlink: true,
       cursorStyle: 'block',
@@ -1397,13 +1424,30 @@
     });
     const fitAddon = new window.FitAddon.FitAddon();
     xterm.loadAddon(fitAddon);
+
+// Register file link provider for clickable paths
+    if (window.FileLinkProvider) {
+      window.FileLinkProvider.register(xterm, () => {
+        // Look up cwd dynamically — sessionId may be set after terminal creation
+        // Check the passed sessionId first, then scan openTerminals for this xterm
+        const sid = sessionId || findSessionIdForXterm(xterm);
+        if (sid) {
+          const session = allSessions.find(s => s.id === sid);
+          if (session) return session.cwd;
+        }
+        // Fallback: use _getActiveCwd
+        if (window._getActiveCwd) return window._getActiveCwd();
+        return '';
+      });
+    }
+
     return { xterm, fitAddon };
   }
 
   function reconnectTerminal(terminalId, sessionId) {
     const ch = characters.get(sessionId);
     const name = ch?.name || nextAvailableName();
-    const { xterm, fitAddon } = createXterm();
+    const { xterm, fitAddon } = createXterm(sessionId);
 
     // Forward keystrokes to current WS (looked up dynamically)
     xterm.onData((data) => {
@@ -1456,7 +1500,7 @@
 
     if (!terminalId) return;
 
-    const { xterm, fitAddon } = createXterm();
+    const { xterm, fitAddon } = createXterm(sessionId);
     const name = charName || nextAvailableName();
 
     // Forward keystrokes
@@ -1475,6 +1519,9 @@
   function showTerminalPanel(terminalId) {
     const panel = document.getElementById('terminal-panel');
     const container = document.getElementById('terminal-container');
+
+    // Hide file viewers when switching to terminal
+    if (window.FileViewer) window.FileViewer.hideAll();
 
     // Detach currently active terminal's DOM
     if (activeTerminalId && activeTerminalId !== terminalId) {
@@ -1576,11 +1623,14 @@
     if (!tabsEl) return;
     tabsEl.innerHTML = '';
 
+    // Terminal tabs
     for (const [id, t] of openTerminals) {
+      const isActiveTermTab = id === activeTerminalId && !(window.FileViewer && window.FileViewer.getActiveFilePath());
       const tab = document.createElement('button');
-      tab.className = `terminal-tab${id === activeTerminalId ? ' active' : ''}`;
+      tab.className = `terminal-tab${isActiveTermTab ? ' active' : ''}`;
 
       const label = document.createElement('span');
+      label.className = 'tab-label';
       label.textContent = t.name;
       tab.appendChild(label);
 
@@ -1594,10 +1644,104 @@
       });
       tab.appendChild(kill);
 
-      tab.addEventListener('click', () => showTerminalPanel(id));
+      tab.addEventListener('click', () => {
+        // Hide file viewers, show terminal
+        if (window.FileViewer) window.FileViewer.hideAll();
+        showTerminalPanel(id);
+      });
       tabsEl.appendChild(tab);
     }
+
+    // File viewer tabs
+    if (window.FileViewer) {
+      const openFiles = window.FileViewer.getOpenFiles();
+      const activeFile = window.FileViewer.getActiveFilePath();
+
+      for (const [path, entry] of openFiles) {
+        const filename = path.split('/').pop();
+        const tab = document.createElement('button');
+        tab.className = `terminal-tab file-tab${path === activeFile ? ' active' : ''}${!entry.pinned ? ' preview' : ''}`;
+
+        const icon = document.createElement('span');
+        icon.className = 'tab-icon';
+        icon.textContent = '{}';
+        tab.appendChild(icon);
+
+        const label = document.createElement('span');
+        label.className = 'tab-label';
+        label.textContent = filename;
+        label.title = path;
+        tab.appendChild(label);
+
+        const dot = document.createElement('span');
+        dot.className = `unsaved-dot${entry.dirty ? ' visible' : ''}`;
+        tab.appendChild(dot);
+
+        const close = document.createElement('span');
+        close.className = 'tab-close';
+        close.textContent = '✕';
+        close.title = 'close file';
+        close.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.FileViewer.closeFile(path);
+        });
+        tab.appendChild(close);
+
+        // Single click: show file (it's already open)
+        tab.addEventListener('click', () => {
+          // Hide active terminal xterm
+          if (activeTerminalId) {
+            const prev = openTerminals.get(activeTerminalId);
+            if (prev && prev.xterm.element) prev.xterm.element.style.display = 'none';
+          }
+          window.FileViewer.showFile(path);
+          updateTerminalTabs();
+        });
+
+        // Double click: pin the tab
+        tab.addEventListener('dblclick', (e) => {
+          e.preventDefault();
+          if (!entry.pinned) {
+            entry.pinned = true;
+            updateTerminalTabs();
+          }
+        });
+
+        tabsEl.appendChild(tab);
+      }
+    }
   }
+
+  function findSessionIdForXterm(xterm) {
+    for (const [, t] of openTerminals) {
+      if (t.xterm === xterm && t.sessionId) return t.sessionId;
+    }
+    return null;
+  }
+
+  // Expose hooks for file-viewer.js and command-palette.js
+  window._updateTerminalTabs = updateTerminalTabs;
+  window._hideActiveTerminal = function() {
+    if (activeTerminalId) {
+      const prev = openTerminals.get(activeTerminalId);
+      if (prev && prev.xterm.element) prev.xterm.element.style.display = 'none';
+    }
+  };
+  window._getActiveCwd = function() {
+    // Get cwd from the active terminal's session
+    if (activeTerminalId) {
+      const term = openTerminals.get(activeTerminalId);
+      if (term && term.sessionId) {
+        const session = allSessions.find(s => s.id === term.sessionId);
+        if (session) return session.cwd;
+      }
+    }
+    // Fallback: first session with a cwd
+    for (const s of allSessions) {
+      if (s.cwd) return s.cwd;
+    }
+    return '';
+  };
 
   function handleTerminalResize() {
     if (!activeTerminalId) return;
