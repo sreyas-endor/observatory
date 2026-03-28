@@ -25,6 +25,27 @@ canvas {
   image-rendering: crisp-edges;
 }
 
+/* ── Logo mark (top-left) — Linus sprite face ────────────────── */
+#logo-mark {
+  position: fixed;
+  top: 10px; left: 12px;
+  z-index: 20;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+  cursor: default;
+  user-select: none;
+}
+#logo-mark:hover { opacity: 1; }
+#logo-sprite {
+  width: 16px; height: 16px;
+  background: url('assets/characters/char_0.png') 0 0;
+  background-size: 112px 96px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  transform: scale(2.2);
+  transform-origin: top left;
+}
+
 #status-bar {
   position: fixed;
   bottom: 8px; right: 12px;

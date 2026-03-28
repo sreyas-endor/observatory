@@ -8,8 +8,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" id="favicon" href="logo.svg" type="image/svg+xml" />
 </head>
 <body>
+  <div id="logo-mark" title="Observatory">
+    <div id="logo-sprite"></div>
+  </div>
   <div id="game-container"></div>
 
   <!-- Search button (top-right) -->
@@ -113,5 +117,23 @@
 <script src="command-palette.js"></script>
 
   <script src="game.js"></script>
+  <script>
+  // Generate favicon from Linus sprite (char_0.png, row 0 col 0, 16x32 frame)
+  (function() {
+    const img = new Image();
+    img.onload = function() {
+      const c = document.createElement('canvas');
+      c.width = 32; c.height = 32;
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      // Draw the 16x32 front-facing frame scaled to 32x32 (crop to head: top 16px of the 32px frame, scaled 2x)
+      ctx.drawImage(img, 0, 0, 16, 16, 0, 0, 32, 32);
+      const link = document.getElementById('favicon');
+      link.type = 'image/png';
+      link.href = c.toDataURL('image/png');
+    };
+    img.src = 'assets/characters/char_0.png';
+  })();
+  </script>
 </body>
 </html>
