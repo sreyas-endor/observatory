@@ -9,10 +9,13 @@ export type SessionState =
   | "mcp"
   | "input";  // blocked mid-task waiting for user answer (AskUserQuestion)
 
+export type AgentSource = "claude" | "cursor" | "copilot" | "gemini" | "";
+
 export interface Session {
   id: string;
   cwd: string;
   state: SessionState;
+  source: AgentSource;
   lastSeen: number;
   startedAt: number;
   stateChangedAt: number;

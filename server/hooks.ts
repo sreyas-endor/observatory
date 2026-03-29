@@ -245,9 +245,10 @@ function processNormalizedHook(hook: NormalizedHook, source: string) {
   }
 
   // Create Observatory session on first hook
+  const agentSource = source as import("./types").AgentSource;
   let session = sessions.get(terminalId);
   if (!session) {
-    upsertSession(terminalId, cwd, "thinking");
+    upsertSession(terminalId, cwd, "thinking", agentSource);
     session = sessions.get(terminalId)!;
     session.terminalId = terminalId;
   }
@@ -277,7 +278,7 @@ function processNormalizedHook(hook: NormalizedHook, source: string) {
     state = "waiting";
   }
 
-  upsertSession(terminalId, cwd, state);
+  upsertSession(terminalId, cwd, state, agentSource);
   const s = sessions.get(terminalId);
   if (s) s.terminalId = terminalId;
 

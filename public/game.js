@@ -610,11 +610,12 @@
         const seatId = assignSeat();
         // Initialize isActive correctly so applySessionState sees no fake transition
         const active = !['waiting', 'error'].includes(session.state);
-        ch = createCharacter(session.id, session.type, seatId, active);
+        ch = createCharacter(session.id, session.source || session.type || '', seatId, active);
         characters.set(session.id, ch);
         if (seatId) seatAssignments.set(seatId, session.id);
       }
       ch.startedAt = session.startedAt || ch.startedAt || Date.now();
+      if (session.source && !ch.type) ch.type = session.source;
       applySessionState(ch, session.state);
       // Always use server's stateChangedAt — it's authoritative for timer display
       if (session.stateChangedAt) ch.stateChangedAt = session.stateChangedAt;
@@ -893,6 +894,13 @@
     pill(cx, curY, timerLabel, 'rgba(0,0,0,0.85)', timerColor, fs, px, py);
   }
 
+  const AGENT_COLORS = {
+    claude:  'rgba(210, 90, 40, 0.88)',  // warm orange
+    cursor:  'rgba(60, 110, 220, 0.88)', // blue
+    copilot: 'rgba(45, 160, 80, 0.88)',  // green
+    gemini:  'rgba(140, 80, 200, 0.88)', // purple
+  };
+
   function drawNameTag(ch, cx, footY) {
     const fs  = Math.max(9, Math.round(9 * zoom / 3));
     const px  = Math.max(4, Math.round(4 * zoom / 3));
@@ -901,7 +909,7 @@
     ctx.font = `bold ${fs}px "Courier New", monospace`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'top';
-    const bg = ch.type === 'claude' ? 'rgba(210,90,40,0.88)' : 'rgba(0,0,0,0.82)';
+    const bg = AGENT_COLORS[ch.type] || 'rgba(0,0,0,0.82)';
     pill(cx, footY + gap, ch.name, bg, '#ffffff', fs, px, py);
   }
 

@@ -18,7 +18,7 @@ const ptyProcess = pty.spawn(shell, ["-l"], {
   cols,
   rows,
   cwd,
-  env: { ...process.env, OBSERVATORY_TERMINAL_ID: terminalId },
+  env: { ...process.env, OBSERVATORY_TERMINAL_ID: terminalId, PROMPT_EOL_MARK: "" },
 });
 
 function sendMsg(obj) {

@@ -186,6 +186,7 @@ fn pty_spawn(
     cmd.cwd(&cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("OBSERVATORY_TERMINAL_ID", &terminal_id);
+    cmd.env("PROMPT_EOL_MARK", "");
 
     let child = pair
         .slave
