@@ -1,6 +1,6 @@
 # Observatory
 
-A real-time dashboard that visualizes what your AI coding agents are doing across multiple terminals. Watch Claude Code, Cursor, Copilot CLI, and Gemini CLI sessions side by side — see when they're thinking, reading files, editing code, or waiting for input.
+~~I coded~~ Claude coded a real-time dashboard that visualizes what your AI coding agents are doing across multiple terminals. Watch Claude Code, Cursor, Copilot CLI, and Gemini CLI sessions side by side — see when they're thinking, reading files, editing code, or waiting for input.
 
 Web-based. No desktop app needed.
 
@@ -207,25 +207,12 @@ Copilot uses **project-level hooks only** — there's no global config. Add `.gi
 
 For Observatory's file viewer to work well, your AI agent should output full file paths (not just filenames). Add this instruction to your CLI's rules file:
 
-**Claude Code** — append to `CLAUDE.md` (project root or `~/.claude/CLAUDE.md` for global):
-
-```markdown
-When referencing files, always use the full relative path from the project root with a line number: `path/to/file.ts:42`. Never use just the filename.
-```
-
-**Gemini CLI** — append to `GEMINI.md` (project root or `~/.gemini/GEMINI.md` for global):
-
-```markdown
-When referencing files, always use the full relative path from the project root with a line number: `path/to/file.ts:42`. Never use just the filename.
-```
-
-**Copilot CLI** — append to `.github/copilot-instructions.md`:
-
-```markdown
-When referencing files, always use the full relative path from the project root with a line number: `path/to/file.ts:42`. Never use just the filename.
-```
-
-**Cursor** — create `.cursor/rules/observatory.mdc` in your project:
+| CLI | File | Scope |
+|---|---|---|
+| Claude Code | `CLAUDE.md` or `~/.claude/CLAUDE.md` | project or global |
+| Gemini CLI | `GEMINI.md` or `~/.gemini/GEMINI.md` | project or global |
+| Copilot CLI | `.github/copilot-instructions.md` | project |
+| Cursor | `.cursor/rules/observatory.mdc` | project |
 
 ```markdown
 When referencing files, always use the full relative path from the project root with a line number: `path/to/file.ts:42`. Never use just the filename.
