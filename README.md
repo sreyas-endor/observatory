@@ -1,8 +1,21 @@
 # Observatory
 
+Inspired by [Pixel Agents](https://github.com/anthropics/pixel-agents) — this project wouldn't have been possible without it.
+
 ~~I coded~~ Claude coded a real-time dashboard that visualizes what your AI coding agents are doing across multiple terminals. Watch Claude Code, Cursor, Copilot CLI, and Gemini CLI sessions side by side — see when they're thinking, reading files, editing code, or waiting for input.
 
 Web-based. No desktop app needed.
+
+## Features
+
+- **Live agent visualization** — pixel-art characters represent each agent session, with real-time state animations (thinking, reading, editing, running, idle)
+- **Multi-agent support** — Claude Code, Cursor, Copilot CLI, and Gemini CLI, each color-coded by agent type
+- **Built-in terminal** — click the `+` button or any character to open an embedded xterm.js terminal. Spawn Claude Code sessions directly from Observatory
+- **File viewer** — Cmd+P command palette with fuzzy search, CodeMirror 6 editor with syntax highlighting, autosave, and preview/pinned tabs
+- **Terminal file links** — file paths in terminal output are detected and underlined. Cmd+Click opens them in the file viewer
+- **Reconnect on reload** — terminals persist across page refreshes with output replay
+
+> **Note:** Hook integrations exist for Claude Code, Cursor, Copilot CLI, and Gemini CLI, but **only Claude Code has been thoroughly tested**. Other CLIs should work but may have edge cases.
 
 ## Prerequisites
 
