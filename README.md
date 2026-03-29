@@ -6,6 +6,12 @@ Inspired by [Pixel Agents](https://github.com/anthropics/pixel-agents) — this 
 
 Web-based. No desktop app needed.
 
+
+
+https://github.com/user-attachments/assets/218d64fc-eeb7-44dc-8cad-46de2e3b0d6d
+
+
+
 ## Features
 
 - **Live agent visualization** — pixel-art characters represent each agent session, with real-time state animations (thinking, reading, editing, running, idle)
