@@ -38,6 +38,8 @@ export function spawnTerminal(cwd?: string): Terminal {
           try {
             const msg = JSON.parse(line);
             if (msg.type === "output") {
+              // Guard: terminal may have been killed while we were reading
+              if (!terminals.has(id)) break;
               // Buffer for replay on reconnect
               term.outputBuffer.push(msg.data);
               if (term.outputBuffer.length > MAX_OUTPUT_BUFFER) {
@@ -48,27 +50,44 @@ export function spawnTerminal(cwd?: string): Terminal {
                 try { ws.send(payload); } catch { term.subscribers.delete(ws); }
               }
             } else if (msg.type === "exit") {
-              const payload = JSON.stringify({ type: "terminal_exit", terminalId: id, exitCode: msg.exitCode });
-              for (const ws of term.subscribers) {
-                try { ws.send(payload); } catch {}
-              }
-              terminals.delete(id);
-              // Clean up claude→terminal mapping
-              for (const [cid, tid] of cliSessionToTerminal) { if (tid === id) cliSessionToTerminal.delete(cid); }
-              // Remove session so character disappears
-              sessions.delete(id);
-              sessionLogs.delete(id);
-              broadcastSessions();
-              console.log(`[terminal] ${id} exited (code=${msg.exitCode})`);
+              cleanupTerminal(id, msg.exitCode);
             }
           } catch {}
         }
       }
-    } catch {}
+    } catch (e) {
+      console.error(`[terminal] reader error for ${id}:`, e);
+    } finally {
+      // Always release the reader lock to avoid resource leaks
+      try { reader.releaseLock(); } catch {}
+    }
   })();
 
   console.log(`[terminal] spawned ${id} (pid=${proc.pid})`);
   return term;
+}
+
+/** Shared cleanup — safe to call multiple times for the same id */
+function cleanupTerminal(id: string, exitCode?: number) {
+  const term = terminals.get(id);
+  if (!term) return; // already cleaned up (killed via API or duplicate exit)
+
+  const payload = JSON.stringify({ type: "terminal_exit", terminalId: id, exitCode: exitCode ?? -1 });
+  for (const ws of term.subscribers) {
+    try { ws.send(payload); } catch {}
+  }
+  term.subscribers.clear();
+  terminals.delete(id);
+
+  // Clean up claude→terminal mapping
+  for (const [cid, tid] of cliSessionToTerminal) {
+    if (tid === id) cliSessionToTerminal.delete(cid);
+  }
+  // Remove session so character disappears
+  sessions.delete(id);
+  sessionLogs.delete(id);
+  broadcastSessions();
+  console.log(`[terminal] ${id} cleaned up (exitCode=${exitCode ?? "killed"})`);
 }
 
 function sendToHelper(term: Terminal, msg: unknown) {
@@ -90,11 +109,12 @@ export function writeTerminal(id: string, data: string) {
 
 export function killTerminal(id: string) {
   const term = terminals.get(id);
-  if (term) {
-    sendToHelper(term, { type: "kill" });
-    term.proc.kill();
-    terminals.delete(id);
-    for (const [cid, tid] of cliSessionToTerminal) { if (tid === id) cliSessionToTerminal.delete(cid); }
-    console.log(`[terminal] killed ${id}`);
-  }
+  if (!term) return;
+
+  // Tell the helper to kill the PTY, then kill the helper process itself
+  sendToHelper(term, { type: "kill" });
+  try { term.proc.kill(); } catch {}
+
+  // Shared cleanup (removes from maps, notifies subscribers, broadcasts)
+  cleanupTerminal(id);
 }

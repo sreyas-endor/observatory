@@ -361,7 +361,7 @@
     charFaceCanvases = charImgs.map(img => img ? buildFaceCanvas(img) : null);
 
     await Promise.all(
-      Array.from({ length: 9 }, (_, i) =>
+      [0, 1, 5].map(i =>
         loadImage(`assets/floors/floor_${i}.png`).then(img => { floorImages[i] = img; })
       )
     );
@@ -1216,11 +1216,8 @@
     ws.onerror = () => ws.close();
   }
 
-  // ── Status bar ────────────────────────────────────────────────────────────
   function setStatus(connected) {
-    document.getElementById('ws-dot')?.classList.toggle('connected', connected);
-    const label = document.getElementById('ws-label');
-    if (label) label.textContent = connected ? 'observatory connected' : 'reconnecting…';
+    // no-op: status bar removed
   }
 
   // ── Canvas / resize ───────────────────────────────────────────────────────

@@ -74,10 +74,7 @@ const server = serve<WsData>({
       return readJSON(req).then((body) => {
         const id = body.terminalId as string;
         if (id) {
-          killTerminal(id);
-          sessions.delete(id);
-          sessionLogs.delete(id);
-          broadcastSessions();
+          killTerminal(id); // handles all cleanup (maps, subscribers, broadcast)
         }
         return new Response("{}", { headers: { "Content-Type": "application/json" } });
       });
