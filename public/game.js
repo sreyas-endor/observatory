@@ -79,8 +79,8 @@
   const SEAT_DEFS = [
     { seatId: 'seat-0', col: 3, row: 14, dir: DIR.UP },
     { seatId: 'seat-1', col: 7, row: 14, dir: DIR.UP },
-    { seatId: 'seat-2', col: 3, row: 16, dir: DIR.RIGHT, seatOffX: 0, seatOffY: -4 },
-    { seatId: 'seat-3', col: 7, row: 16, dir: DIR.LEFT,  seatOffX: 0, seatOffY: -4 },
+    { seatId: 'seat-2', col: 3, row: 18, dir: DIR.RIGHT, seatOffX: 0, seatOffY: -4 },
+    { seatId: 'seat-3', col: 7, row: 18, dir: DIR.LEFT,  seatOffX: 0, seatOffY: -4 },
   ];
 
 
